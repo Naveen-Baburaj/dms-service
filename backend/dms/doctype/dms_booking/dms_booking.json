@@ -1,0 +1,29 @@
+{
+  "name": "DMS Booking",
+  "module": "DMS",
+  "doctype": "DocType",
+  "autoname": "format:BOOK-{company_id:.3}-{YYYY}-{#####}",
+  "fields": [
+    { "fieldname": "company_id", "fieldtype": "Link", "options": "DMS Company", "label": "Company", "reqd": 1 },
+    { "fieldname": "customer_id", "fieldtype": "Link", "options": "DMS Customer", "label": "Customer", "reqd": 1, "in_list_view": 1 },
+    { "fieldname": "customer_name", "fieldtype": "Data", "label": "Customer Name", "fetch_from": "customer_id.customer_name", "read_only": 1, "in_list_view": 1 },
+    { "fieldname": "vehicle_id", "fieldtype": "Link", "options": "DMS Vehicle", "label": "Vehicle", "reqd": 1 },
+    { "fieldname": "model", "fieldtype": "Data", "label": "Model" },
+    { "fieldname": "variant", "fieldtype": "Data", "label": "Variant" },
+    { "fieldname": "color", "fieldtype": "Data", "label": "Color" },
+    { "fieldname": "booking_amount", "fieldtype": "Currency", "label": "Booking Amount", "reqd": 1 },
+    { "fieldname": "booking_date", "fieldtype": "Date", "label": "Booking Date", "reqd": 1 },
+    { "fieldname": "expected_delivery", "fieldtype": "Date", "label": "Expected Delivery" },
+    { "fieldname": "status", "fieldtype": "Select", "label": "Status", "options": "Pending\nConfirmed\nCancelled\nConverted", "default": "Pending", "in_list_view": 1 },
+    { "fieldname": "notes", "fieldtype": "Text", "label": "Notes" }
+  ],
+  "permissions": [
+    { "role": "Group Admin", "read": 1, "write": 1, "create": 1, "delete": 1 },
+    { "role": "Honda Manager", "read": 1, "write": 1, "create": 1 },
+    { "role": "Honda User", "read": 1, "write": 1, "create": 1 },
+    { "role": "NEXA Manager", "read": 1, "write": 1, "create": 1 },
+    { "role": "NEXA User", "read": 1, "write": 1, "create": 1 },
+    { "role": "Jaguar Manager", "read": 1, "write": 1, "create": 1 },
+    { "role": "Jaguar User", "read": 1, "write": 1, "create": 1 }
+  ]
+}

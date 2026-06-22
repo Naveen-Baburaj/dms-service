@@ -1,0 +1,31 @@
+{
+  "name": "DMS Vehicle",
+  "module": "DMS",
+  "doctype": "DocType",
+  "autoname": "format:VEH-{company_id:.3}-{YYYY}-{#####}",
+  "fields": [
+    { "fieldname": "company_id", "fieldtype": "Link", "options": "DMS Company", "label": "Company", "reqd": 1 },
+    { "fieldname": "vehicle_name", "fieldtype": "Data", "label": "Vehicle Name", "reqd": 1, "in_list_view": 1 },
+    { "fieldname": "model", "fieldtype": "Data", "label": "Model", "reqd": 1, "in_list_view": 1 },
+    { "fieldname": "variant", "fieldtype": "Data", "label": "Variant", "reqd": 1 },
+    { "fieldname": "color", "fieldtype": "Data", "label": "Color", "reqd": 1 },
+    { "fieldname": "year", "fieldtype": "Int", "label": "Year" },
+    { "fieldname": "fuel_type", "fieldtype": "Select", "label": "Fuel Type", "options": "Petrol\nDiesel\nCNG\nElectric\nHybrid" },
+    { "fieldname": "transmission", "fieldtype": "Select", "label": "Transmission", "options": "Manual\nAutomatic\nCVT" },
+    { "fieldname": "chassis_no", "fieldtype": "Data", "label": "Chassis No", "unique": 1 },
+    { "fieldname": "engine_no", "fieldtype": "Data", "label": "Engine No", "unique": 1 },
+    { "fieldname": "ex_showroom_price", "fieldtype": "Currency", "label": "Ex-Showroom Price", "reqd": 1 },
+    { "fieldname": "on_road_price", "fieldtype": "Currency", "label": "On-Road Price" },
+    { "fieldname": "stock_status", "fieldtype": "Select", "label": "Stock Status", "options": "In Stock\nBooked\nSold\nTransit", "default": "In Stock" },
+    { "fieldname": "image", "fieldtype": "Attach Image", "label": "Vehicle Image" }
+  ],
+  "permissions": [
+    { "role": "Group Admin", "read": 1, "write": 1, "create": 1, "delete": 1 },
+    { "role": "Honda Manager", "read": 1, "write": 1, "create": 1 },
+    { "role": "Honda User", "read": 1 },
+    { "role": "NEXA Manager", "read": 1, "write": 1, "create": 1 },
+    { "role": "NEXA User", "read": 1 },
+    { "role": "Jaguar Manager", "read": 1, "write": 1, "create": 1 },
+    { "role": "Jaguar User", "read": 1 }
+  ]
+}

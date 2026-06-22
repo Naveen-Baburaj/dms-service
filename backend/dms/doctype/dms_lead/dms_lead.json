@@ -1,0 +1,31 @@
+{
+  "name": "DMS Lead",
+  "module": "DMS",
+  "doctype": "DocType",
+  "autoname": "format:LEAD-{company_id:.3}-{YYYY}-{#####}",
+  "is_submittable": 0,
+  "track_changes": 1,
+  "fields": [
+    { "fieldname": "company_id", "fieldtype": "Link", "options": "DMS Company", "label": "Company", "reqd": 1, "in_list_view": 1 },
+    { "fieldname": "company_name", "fieldtype": "Data", "label": "Company Name", "fetch_from": "company_id.company_name", "read_only": 1 },
+    { "fieldname": "lead_name", "fieldtype": "Data", "label": "Lead Name", "reqd": 1, "in_list_view": 1 },
+    { "fieldname": "email", "fieldtype": "Data", "label": "Email", "options": "Email", "in_list_view": 1 },
+    { "fieldname": "mobile_no", "fieldtype": "Data", "label": "Mobile No", "reqd": 1, "in_list_view": 1 },
+    { "fieldname": "status", "fieldtype": "Select", "label": "Status", "options": "New\nOpen\nReplied\nOpportunity\nQuotation\nConverted\nDo Not Contact\nLost", "default": "New", "in_list_view": 1 },
+    { "fieldname": "source", "fieldtype": "Select", "label": "Lead Source", "options": "Website\nCold Calling\nReferral\nSocial Media\nWalk-in\nExhibition\nCampaign\nDigital" },
+    { "fieldname": "vehicle_interest", "fieldtype": "Data", "label": "Vehicle Interest" },
+    { "fieldname": "budget", "fieldtype": "Currency", "label": "Budget" },
+    { "fieldname": "notes", "fieldtype": "Text", "label": "Notes" },
+    { "fieldname": "assigned_to", "fieldtype": "Link", "options": "User", "label": "Assigned To" },
+    { "fieldname": "follow_up_date", "fieldtype": "Date", "label": "Follow Up Date" }
+  ],
+  "permissions": [
+    { "role": "Group Admin", "read": 1, "write": 1, "create": 1, "delete": 1 },
+    { "role": "Honda Manager", "read": 1, "write": 1, "create": 1, "delete": 1 },
+    { "role": "Honda User", "read": 1, "write": 1, "create": 1 },
+    { "role": "NEXA Manager", "read": 1, "write": 1, "create": 1, "delete": 1 },
+    { "role": "NEXA User", "read": 1, "write": 1, "create": 1 },
+    { "role": "Jaguar Manager", "read": 1, "write": 1, "create": 1, "delete": 1 },
+    { "role": "Jaguar User", "read": 1, "write": 1, "create": 1 }
+  ]
+}

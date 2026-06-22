@@ -1,0 +1,33 @@
+{
+  "name": "DMS Invoice",
+  "module": "DMS",
+  "doctype": "DocType",
+  "autoname": "format:INV-{company_id:.3}-{YYYY}-{#####}",
+  "is_submittable": 1,
+  "fields": [
+    { "fieldname": "company_id", "fieldtype": "Link", "options": "DMS Company", "label": "Company", "reqd": 1 },
+    { "fieldname": "invoice_type", "fieldtype": "Select", "label": "Invoice Type", "options": "Vehicle Sale\nService", "reqd": 1 },
+    { "fieldname": "customer_id", "fieldtype": "Link", "options": "DMS Customer", "label": "Customer", "reqd": 1, "in_list_view": 1 },
+    { "fieldname": "customer_name", "fieldtype": "Data", "label": "Customer Name", "fetch_from": "customer_id.customer_name", "read_only": 1, "in_list_view": 1 },
+    { "fieldname": "reference_doc", "fieldtype": "Dynamic Link", "label": "Reference", "options": "reference_doctype" },
+    { "fieldname": "reference_doctype", "fieldtype": "Select", "label": "Reference DocType", "options": "DMS Vehicle Sale\nDMS Service Job" },
+    { "fieldname": "invoice_date", "fieldtype": "Date", "label": "Invoice Date", "reqd": 1 },
+    { "fieldname": "subtotal", "fieldtype": "Currency", "label": "Subtotal" },
+    { "fieldname": "discount", "fieldtype": "Currency", "label": "Discount" },
+    { "fieldname": "tax_amount", "fieldtype": "Currency", "label": "Tax (GST)" },
+    { "fieldname": "total_amount", "fieldtype": "Currency", "label": "Total Amount", "reqd": 1, "in_list_view": 1 },
+    { "fieldname": "payment_status", "fieldtype": "Select", "label": "Payment Status", "options": "Unpaid\nPartially Paid\nPaid", "default": "Unpaid", "in_list_view": 1 },
+    { "fieldname": "paid_amount", "fieldtype": "Currency", "label": "Paid Amount", "default": "0" },
+    { "fieldname": "balance_amount", "fieldtype": "Currency", "label": "Balance Amount" },
+    { "fieldname": "due_date", "fieldtype": "Date", "label": "Due Date" }
+  ],
+  "permissions": [
+    { "role": "Group Admin", "read": 1, "write": 1, "create": 1, "submit": 1, "cancel": 1 },
+    { "role": "Honda Manager", "read": 1, "write": 1, "create": 1, "submit": 1, "cancel": 1 },
+    { "role": "Honda User", "read": 1 },
+    { "role": "NEXA Manager", "read": 1, "write": 1, "create": 1, "submit": 1, "cancel": 1 },
+    { "role": "NEXA User", "read": 1 },
+    { "role": "Jaguar Manager", "read": 1, "write": 1, "create": 1, "submit": 1, "cancel": 1 },
+    { "role": "Jaguar User", "read": 1 }
+  ]
+}

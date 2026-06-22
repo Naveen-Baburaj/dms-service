@@ -1,0 +1,37 @@
+{
+  "name": "DMS Vehicle Sale",
+  "module": "DMS",
+  "doctype": "DocType",
+  "autoname": "format:SALE-{company_id:.3}-{YYYY}-{#####}",
+  "is_submittable": 1,
+  "track_changes": 1,
+  "fields": [
+    { "fieldname": "company_id", "fieldtype": "Link", "options": "DMS Company", "label": "Company", "reqd": 1 },
+    { "fieldname": "company_name", "fieldtype": "Data", "label": "Company Name", "read_only": 1 },
+    { "fieldname": "customer_id", "fieldtype": "Link", "options": "DMS Customer", "label": "Customer", "reqd": 1, "in_list_view": 1 },
+    { "fieldname": "customer_name", "fieldtype": "Data", "label": "Customer Name", "fetch_from": "customer_id.customer_name", "read_only": 1, "in_list_view": 1 },
+    { "fieldname": "vehicle_id", "fieldtype": "Link", "options": "DMS Vehicle", "label": "Vehicle", "reqd": 1 },
+    { "fieldname": "model", "fieldtype": "Data", "label": "Model", "in_list_view": 1 },
+    { "fieldname": "variant", "fieldtype": "Data", "label": "Variant" },
+    { "fieldname": "color", "fieldtype": "Data", "label": "Color" },
+    { "fieldname": "chassis_no", "fieldtype": "Data", "label": "Chassis No" },
+    { "fieldname": "engine_no", "fieldtype": "Data", "label": "Engine No" },
+    { "fieldname": "sale_price", "fieldtype": "Currency", "label": "Sale Price", "reqd": 1 },
+    { "fieldname": "discount", "fieldtype": "Currency", "label": "Discount", "default": "0" },
+    { "fieldname": "final_price", "fieldtype": "Currency", "label": "Final Price", "reqd": 1, "in_list_view": 1 },
+    { "fieldname": "payment_mode", "fieldtype": "Select", "label": "Payment Mode", "options": "Cash\nFinance\nExchange\nLease", "reqd": 1 },
+    { "fieldname": "status", "fieldtype": "Select", "label": "Status", "options": "Draft\nConfirmed\nDelivered\nCancelled", "default": "Draft", "in_list_view": 1 },
+    { "fieldname": "sales_consultant", "fieldtype": "Link", "options": "User", "label": "Sales Consultant" },
+    { "fieldname": "delivery_date", "fieldtype": "Date", "label": "Delivery Date" },
+    { "fieldname": "invoice_no", "fieldtype": "Data", "label": "Invoice No" }
+  ],
+  "permissions": [
+    { "role": "Group Admin", "read": 1, "write": 1, "create": 1, "submit": 1, "cancel": 1 },
+    { "role": "Honda Manager", "read": 1, "write": 1, "create": 1, "submit": 1, "cancel": 1 },
+    { "role": "Honda User", "read": 1, "write": 1, "create": 1 },
+    { "role": "NEXA Manager", "read": 1, "write": 1, "create": 1, "submit": 1, "cancel": 1 },
+    { "role": "NEXA User", "read": 1, "write": 1, "create": 1 },
+    { "role": "Jaguar Manager", "read": 1, "write": 1, "create": 1, "submit": 1, "cancel": 1 },
+    { "role": "Jaguar User", "read": 1, "write": 1, "create": 1 }
+  ]
+}

@@ -1,0 +1,29 @@
+{
+  "name": "DMS Test Drive",
+  "module": "DMS",
+  "doctype": "DocType",
+  "autoname": "format:TD-{company_id:.3}-{YYYY}-{#####}",
+  "fields": [
+    { "fieldname": "company_id", "fieldtype": "Link", "options": "DMS Company", "label": "Company", "reqd": 1 },
+    { "fieldname": "lead_id", "fieldtype": "Link", "options": "DMS Lead", "label": "Lead" },
+    { "fieldname": "customer_id", "fieldtype": "Link", "options": "DMS Customer", "label": "Customer" },
+    { "fieldname": "contact_name", "fieldtype": "Data", "label": "Contact Name", "reqd": 1, "in_list_view": 1 },
+    { "fieldname": "mobile_no", "fieldtype": "Data", "label": "Mobile No", "reqd": 1 },
+    { "fieldname": "vehicle_id", "fieldtype": "Link", "options": "DMS Vehicle", "label": "Vehicle", "reqd": 1 },
+    { "fieldname": "model", "fieldtype": "Data", "label": "Model", "in_list_view": 1 },
+    { "fieldname": "scheduled_date", "fieldtype": "Date", "label": "Scheduled Date", "reqd": 1, "in_list_view": 1 },
+    { "fieldname": "scheduled_time", "fieldtype": "Time", "label": "Scheduled Time", "reqd": 1 },
+    { "fieldname": "status", "fieldtype": "Select", "label": "Status", "options": "Scheduled\nCompleted\nCancelled\nNo Show", "default": "Scheduled", "in_list_view": 1 },
+    { "fieldname": "feedback", "fieldtype": "Text", "label": "Feedback" },
+    { "fieldname": "rating", "fieldtype": "Rating", "label": "Rating" }
+  ],
+  "permissions": [
+    { "role": "Group Admin", "read": 1, "write": 1, "create": 1, "delete": 1 },
+    { "role": "Honda Manager", "read": 1, "write": 1, "create": 1 },
+    { "role": "Honda User", "read": 1, "write": 1, "create": 1 },
+    { "role": "NEXA Manager", "read": 1, "write": 1, "create": 1 },
+    { "role": "NEXA User", "read": 1, "write": 1, "create": 1 },
+    { "role": "Jaguar Manager", "read": 1, "write": 1, "create": 1 },
+    { "role": "Jaguar User", "read": 1, "write": 1, "create": 1 }
+  ]
+}

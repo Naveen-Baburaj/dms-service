@@ -1,0 +1,35 @@
+{
+  "name": "DMS Customer",
+  "module": "DMS",
+  "doctype": "DocType",
+  "autoname": "format:CUST-{company_id:.3}-{YYYY}-{#####}",
+  "is_submittable": 0,
+  "track_changes": 1,
+  "fields": [
+    { "fieldname": "company_id", "fieldtype": "Link", "options": "DMS Company", "label": "Company", "reqd": 1 },
+    { "fieldname": "company_name", "fieldtype": "Data", "label": "Company Name", "fetch_from": "company_id.company_name", "read_only": 1 },
+    { "fieldname": "customer_name", "fieldtype": "Data", "label": "Customer Name", "reqd": 1, "in_list_view": 1 },
+    { "fieldname": "email", "fieldtype": "Data", "label": "Email", "options": "Email", "in_list_view": 1 },
+    { "fieldname": "mobile_no", "fieldtype": "Data", "label": "Mobile No", "reqd": 1, "in_list_view": 1 },
+    { "fieldname": "customer_type", "fieldtype": "Select", "label": "Customer Type", "options": "Individual\nCorporate", "default": "Individual" },
+    { "fieldname": "status", "fieldtype": "Select", "label": "Status", "options": "Active\nInactive", "default": "Active", "in_list_view": 1 },
+    { "fieldname": "address", "fieldtype": "Text", "label": "Address" },
+    { "fieldname": "city", "fieldtype": "Data", "label": "City" },
+    { "fieldname": "state", "fieldtype": "Data", "label": "State" },
+    { "fieldname": "pin_code", "fieldtype": "Data", "label": "PIN Code" },
+    { "fieldname": "dob", "fieldtype": "Date", "label": "Date of Birth" },
+    { "fieldname": "anniversary", "fieldtype": "Date", "label": "Anniversary" },
+    { "fieldname": "total_purchases", "fieldtype": "Currency", "label": "Total Purchases", "default": "0" },
+    { "fieldname": "last_purchase_date", "fieldtype": "Date", "label": "Last Purchase Date" },
+    { "fieldname": "loyalty_points", "fieldtype": "Int", "label": "Loyalty Points", "default": "0" }
+  ],
+  "permissions": [
+    { "role": "Group Admin", "read": 1, "write": 1, "create": 1, "delete": 1 },
+    { "role": "Honda Manager", "read": 1, "write": 1, "create": 1, "delete": 1 },
+    { "role": "Honda User", "read": 1, "write": 1, "create": 1 },
+    { "role": "NEXA Manager", "read": 1, "write": 1, "create": 1, "delete": 1 },
+    { "role": "NEXA User", "read": 1, "write": 1, "create": 1 },
+    { "role": "Jaguar Manager", "read": 1, "write": 1, "create": 1, "delete": 1 },
+    { "role": "Jaguar User", "read": 1, "write": 1, "create": 1 }
+  ]
+}

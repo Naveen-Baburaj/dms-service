@@ -1,0 +1,27 @@
+{
+  "name": "DMS Company",
+  "module": "DMS",
+  "doctype": "DocType",
+  "is_submittable": 0,
+  "track_changes": 1,
+  "fields": [
+    { "fieldname": "company_name", "fieldtype": "Data", "label": "Company Name", "reqd": 1, "unique": 1 },
+    { "fieldname": "company_type", "fieldtype": "Select", "label": "Company Type", "options": "Automotive\nService\nFinance", "reqd": 1 },
+    { "fieldname": "brand", "fieldtype": "Select", "label": "Brand", "options": "Honda\nNEXA\nJaguar\nOther", "reqd": 1 },
+    { "fieldname": "address", "fieldtype": "Text", "label": "Address" },
+    { "fieldname": "city", "fieldtype": "Data", "label": "City" },
+    { "fieldname": "state", "fieldtype": "Data", "label": "State" },
+    { "fieldname": "pin_code", "fieldtype": "Data", "label": "PIN Code" },
+    { "fieldname": "phone", "fieldtype": "Data", "label": "Phone" },
+    { "fieldname": "email", "fieldtype": "Data", "label": "Email", "options": "Email" },
+    { "fieldname": "gstin", "fieldtype": "Data", "label": "GSTIN" },
+    { "fieldname": "is_active", "fieldtype": "Check", "label": "Is Active", "default": "1" },
+    { "fieldname": "logo", "fieldtype": "Attach Image", "label": "Logo" }
+  ],
+  "permissions": [
+    { "role": "Group Admin", "read": 1, "write": 1, "create": 1, "delete": 1 },
+    { "role": "Honda Manager", "read": 1 },
+    { "role": "NEXA Manager", "read": 1 },
+    { "role": "Jaguar Manager", "read": 1 }
+  ]
+}
