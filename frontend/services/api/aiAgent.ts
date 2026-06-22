@@ -1,4 +1,6 @@
-const AI_BASE = process.env.NEXT_PUBLIC_AI_AGENT_URL ?? 'http://127.0.0.1:8000';
+import { tokenStorage } from './client';
+
+const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://127.0.0.1:8000';
 
 export interface FiltersApplied {
   metric?: string | null;
@@ -20,8 +22,8 @@ const ROLE_MAP: Record<string, string> = {
   group_admin: 'service_centre_admin',
 };
 
-// Maps DMS company names to backend demo tenant IDs.
-// Update to 'honda', 'nexa', 'jaguar' once the backend uses production data.
+// Keep current frontend compatibility.
+// Backend accepts these aliases and resolves them to Honda/NEXA/Jaguar.
 const TENANT_MAP: Record<string, string> = {
   Honda: 'toyota',
   NEXA: 'suzuki',
@@ -30,14 +32,48 @@ const TENANT_MAP: Record<string, string> = {
 
 export function resolveAgentHeaders(role: string, company: string): Record<string, string> {
   const xUserRole = ROLE_MAP[role] ?? 'tenant_user';
+
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     'x-user-role': xUserRole,
   };
+
   if (xUserRole === 'tenant_user') {
     headers['x-tenant-id'] = TENANT_MAP[company] ?? company.toLowerCase();
   }
+
+  const token = tokenStorage.getAccess();
+
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+
   return headers;
+}
+
+function unwrapFrappeResponse(raw: unknown): AgentResponse {
+  const value = raw as {
+    message?: {
+      success?: boolean;
+      data?: AgentResponse;
+      message?: string;
+    };
+    success?: boolean;
+    data?: AgentResponse;
+    message?: string;
+  };
+
+  if (value.message?.success === false) {
+    throw new Error(value.message.message || 'AI agent request failed');
+  }
+
+  if (value.success === false) {
+    throw new Error(value.message || 'AI agent request failed');
+  }
+
+  const data = value.message?.data ?? value.data ?? raw;
+
+  return data as AgentResponse;
 }
 
 export async function queryDashboardAgent(opts: {
@@ -47,16 +83,21 @@ export async function queryDashboardAgent(opts: {
 }): Promise<AgentResponse> {
   const headers = resolveAgentHeaders(opts.role, opts.company);
 
-  const res = await fetch(`${AI_BASE}/api/v1/agent/query`, {
+  const res = await fetch(`${API_BASE}/api/method/dms.api.ai_agent.query`, {
     method: 'POST',
     headers,
     body: JSON.stringify({ query: opts.query }),
   });
 
+  const raw = await res.json().catch(() => null);
+
   if (!res.ok) {
-    const body = await res.text().catch(() => res.statusText);
-    throw new Error(`AI agent error ${res.status}: ${body}`);
+    throw new Error(
+      typeof raw?.message === 'string'
+        ? raw.message
+        : `AI agent error ${res.status}`,
+    );
   }
 
-  return res.json() as Promise<AgentResponse>;
+  return unwrapFrappeResponse(raw);
 }

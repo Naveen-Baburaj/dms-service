@@ -423,7 +423,7 @@ export default function ChatPage() {
         {
           id: (Date.now() + 1).toString(),
           role: 'assistant',
-          content: 'Unable to reach the AI backend. Please make sure the backend server is running on port 8000.',
+          content: 'Unable to reach the DMS backend AI agent. Please make sure the DMS backend is running and the AI endpoint is available.',
           timestamp: new Date(),
           error: true,
         },
