@@ -5,6 +5,10 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 const ACCESS_TOKEN_KEY = 'dms_access_token';
 const REFRESH_TOKEN_KEY = 'dms_refresh_token';
 
+function isMockToken(token: string | null): boolean {
+  return Boolean(token && (token.endsWith('.mock_sig') || token === 'mock_refresh'));
+}
+
 export const tokenStorage = {
   getAccess: (): string | null =>
     typeof window !== 'undefined' ? localStorage.getItem(ACCESS_TOKEN_KEY) : null,
@@ -46,9 +50,13 @@ export const apiClient: AxiosInstance = axios.create({
 apiClient.interceptors.request.use(
   (config) => {
     const token = tokenStorage.getAccess();
-    if (token) {
+
+    // Demo mock JWTs are only for the Next.js frontend middleware.
+    // Do not send them to Frappe because Frappe will reject the fake signature.
+    if (token && !isMockToken(token)) {
       config.headers.Authorization = `Bearer ${token}`;
     }
+
     return config;
   },
   (error) => Promise.reject(error),
@@ -60,6 +68,15 @@ apiClient.interceptors.response.use(
     const originalRequest = error.config as AxiosRequestConfig & { _retry?: boolean };
 
     if (error.response?.status === 401 && !originalRequest._retry) {
+      const accessToken = tokenStorage.getAccess();
+      const refreshToken = tokenStorage.getRefresh();
+
+      // In demo mode, keep the mock frontend session alive.
+      // Some legacy REST endpoints may fail, but they should not log the user out.
+      if (isMockToken(accessToken) || isMockToken(refreshToken)) {
+        return Promise.reject(error);
+      }
+
       if (isRefreshing) {
         return new Promise((resolve, reject) => {
           failedQueue.push({ resolve, reject });
@@ -74,7 +91,6 @@ apiClient.interceptors.response.use(
       originalRequest._retry = true;
       isRefreshing = true;
 
-      const refreshToken = tokenStorage.getRefresh();
       if (!refreshToken) {
         tokenStorage.clearTokens();
         window.location.href = '/login';

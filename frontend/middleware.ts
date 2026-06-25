@@ -9,10 +9,26 @@ const COMPANY_ROUTE_MAP: Record<string, string[]> = {
   Group: ['/admin', '/honda', '/nexa', '/jaguar'],
 };
 
+function decodeBase64Url(value: string): string {
+  let normalized = value.replace(/-/g, '+').replace(/_/g, '/');
+  const padding = normalized.length % 4;
+
+  if (padding) {
+    normalized += '='.repeat(4 - padding);
+  }
+
+  return atob(normalized);
+}
+
 function parseJWTPayload(token: string): Record<string, unknown> | null {
   try {
-    const [, payload] = token.split('.');
-    return JSON.parse(atob(payload.replace(/-/g, '+').replace(/_/g, '/')));
+    const parts = token.split('.');
+
+    if (parts.length < 2 || !parts[1]) {
+      return null;
+    }
+
+    return JSON.parse(decodeBase64Url(parts[1]));
   } catch {
     return null;
   }
@@ -34,8 +50,11 @@ export function middleware(request: NextRequest) {
   }
 
   const payload = parseJWTPayload(token);
-  if (!payload || (payload.exp as number) * 1000 < Date.now()) {
+  const exp = Number(payload?.exp);
+
+  if (!payload || !exp || exp * 1000 < Date.now()) {
     const loginUrl = new URL('/login', request.url);
+    loginUrl.searchParams.set('redirect', pathname);
     return NextResponse.redirect(loginUrl);
   }
 
@@ -49,6 +68,7 @@ export function middleware(request: NextRequest) {
 
   if (isDashboardRoute && allowedRoutes.length > 0) {
     const hasAccess = allowedRoutes.some((r) => pathname.startsWith(r));
+
     if (!hasAccess) {
       const dashboardMap: Record<string, string> = {
         Honda: '/honda',
@@ -56,6 +76,7 @@ export function middleware(request: NextRequest) {
         Jaguar: '/jaguar',
         Group: '/admin',
       };
+
       return NextResponse.redirect(new URL(dashboardMap[company] ?? '/login', request.url));
     }
   }

@@ -2,6 +2,10 @@ import { tokenStorage } from './client';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://127.0.0.1:8000';
 
+function isMockToken(token: string | null): boolean {
+  return Boolean(token && token.endsWith('.mock_sig'));
+}
+
 export interface FiltersApplied {
   metric?: string | null;
   time_range?: string | null;
@@ -44,7 +48,9 @@ export function resolveAgentHeaders(role: string, company: string): Record<strin
 
   const token = tokenStorage.getAccess();
 
-  if (token) {
+  // Demo mock JWTs are only for the Next.js frontend middleware.
+  // Do not send them to Frappe because Frappe will reject the fake signature.
+  if (token && !isMockToken(token)) {
     headers.Authorization = `Bearer ${token}`;
   }
 
