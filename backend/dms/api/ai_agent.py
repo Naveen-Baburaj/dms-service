@@ -31,6 +31,7 @@ from frappe.utils import add_months, getdate, nowdate
 
 from dms.utils.permissions import get_user_company, is_group_admin
 from dms.utils.response import success, error
+from dms.api.knowledge_guard import build_knowledge_response
 
 
 ALL_WIDGETS = [
@@ -237,6 +238,120 @@ def _is_admin() -> bool:
     return _is_admin_from_dev_header()
 
 
+
+def _mentioned_company_names(query: str) -> set[str]:
+    q = query.lower()
+    mentioned: set[str] = set()
+
+    for alias, company_name in COMPANY_ALIASES.items():
+        if not alias or company_name is None:
+            continue
+
+        if re.search(rf"\b{re.escape(alias)}\b", q):
+            mentioned.add(company_name)
+
+    return mentioned
+
+
+def _requests_cross_company_scope(query: str) -> bool:
+    q = query.lower()
+
+    cross_terms = [
+        "all companies",
+        "all tenants",
+        "all brands",
+        "all dealerships",
+        "group data",
+        "group-wide",
+        "cross company",
+        "cross-company",
+        "cross tenant",
+        "cross-tenant",
+        "compare companies",
+        "compare tenants",
+        "compare brands",
+        "compare honda",
+        "compare nexa",
+        "compare jaguar",
+    ]
+
+    return any(term in q for term in cross_terms)
+
+
+def _is_knowledge_lookup_query(query: str) -> bool:
+    q = query.lower()
+
+    knowledge_terms = [
+        "policy",
+        "policies",
+        "rule",
+        "rules",
+        "guideline",
+        "guidelines",
+        "document",
+        "documents",
+        "doc",
+        "docs",
+        "knowledge",
+        "manual",
+        "sop",
+        "procedure",
+        "process",
+        "access",
+        "permission",
+        "permissions",
+        "allowed",
+        "not allowed",
+        "can i",
+        "can user",
+        "what can",
+        "what is allowed",
+    ]
+
+    return any(term in q for term in knowledge_terms)
+
+
+def _should_deny_cross_tenant_request(query: str) -> bool:
+    if _is_admin():
+        return False
+
+    _, company_name = _user_company_scope()
+    allowed_companies = {company_name} if company_name else set()
+    mentioned_companies = _mentioned_company_names(query)
+
+    if mentioned_companies and not mentioned_companies.issubset(allowed_companies):
+        return True
+
+    if _requests_cross_company_scope(query):
+        return True
+
+    return False
+
+
+def _build_cross_tenant_denial_response(query: str) -> dict[str, Any]:
+    company_id, company_name = _user_company_scope()
+    display_name = company_name or "your company"
+
+    return _base_response(
+        intent="unauthorized",
+        metric=None,
+        time_range=None,
+        company_id=company_id,
+        company_name=company_name,
+        widgets_to_show=[],
+        text_response=(
+            f"You only have access to {display_name} information. "
+            "I cannot show or discuss data from other companies."
+        ),
+        widget_payloads={},
+        other={
+            "access_decision": "denied",
+            "reason": "cross_tenant_request",
+            "mentioned_companies": sorted(_mentioned_company_names(query)),
+        },
+    )
+
+
 def _user_company_scope() -> tuple[str | None, str | None]:
     """
     Returns:
@@ -316,7 +431,7 @@ def _llm_parse_query(query: str) -> dict[str, Any]:
     if not ENABLE_GEMINI_INTENT:
         return {}
 
-    api_key = os.getenv("GEMINI_API_KEY")
+    api_key = os.getenv("GEMINI_API_KEY") or frappe.conf.get("gemini_api_key") or frappe.conf.get("GEMINI_API_KEY")
 
     if not api_key:
         return {}
@@ -926,18 +1041,30 @@ def query(query: str | None = None):
         return error("Query is required.", http_status_code=400)
 
     user_query = str(user_query).strip()
-    intent = _detect_intent(user_query)
 
-    if intent == "sales_analysis":
-        data = _build_sales_response(user_query)
-    elif intent == "service_analysis":
-        data = _build_service_response(user_query)
-    elif intent == "inventory_analysis":
-        data = _build_inventory_response(user_query)
-    elif intent == "tenant_comparison":
-        data = _build_tenant_comparison_response(user_query)
+    # Security first: tenant users must never get other-company data,
+    # even when the prompt tries to request or compare another tenant.
+    if _should_deny_cross_tenant_request(user_query):
+        data = _build_cross_tenant_denial_response(user_query)
+
+    # Policy/docs/access questions should use the grounded knowledge assistant,
+    # not dashboard chart routing.
+    elif _is_knowledge_lookup_query(user_query):
+        data = build_knowledge_response(user_query)
+
     else:
-        data = _build_out_of_scope_response()
+        intent = _detect_intent(user_query)
+
+        if intent == "sales_analysis":
+            data = _build_sales_response(user_query)
+        elif intent == "service_analysis":
+            data = _build_service_response(user_query)
+        elif intent == "inventory_analysis":
+            data = _build_inventory_response(user_query)
+        elif intent == "tenant_comparison":
+            data = _build_tenant_comparison_response(user_query)
+        else:
+            data = build_knowledge_response(user_query)
 
     return success(data=data)
 
