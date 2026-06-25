@@ -2,5 +2,5 @@ import frappe
 from frappe.model.document import Document
 
 
-class DmsServiceJob(Document):
+class DMSServiceJob(Document):
     pass
