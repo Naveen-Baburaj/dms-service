@@ -1,0 +1,10 @@
+include requirements.txt
+recursive-include dms *.json
+recursive-include dms *.py
+recursive-include dms *.js
+recursive-include dms *.css
+recursive-include dms *.html
+recursive-include dms *.md
+recursive-include dms *.txt
+recursive-include dms/public *
+recursive-include dms/templates *
