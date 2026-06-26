@@ -64,6 +64,19 @@ def _bool(value: Any) -> bool:
     return str(value).strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _int_limit(value: Any, default: int = 25, maximum: int = 100) -> int:
+    try:
+        parsed = int(value)
+    except Exception:
+        parsed = default
+    return max(1, min(parsed, maximum))
+
+
+def _string_or_none(value: Any) -> str | None:
+    text = str(value or "").strip()
+    return text or None
+
+
 @frappe.whitelist(allow_guest=True)
 def check_session(session_name: str | None = None, deep_check: int | str | bool = False, contacts_url: str | None = None):
     denied = _require_rpa_admin()
@@ -133,6 +146,59 @@ def save_contact(target: str | None = None, contact: str | dict[str, Any] | None
 
 
 @frappe.whitelist(allow_guest=True)
+def list_contacts(limit: int | str | None = None, search: str | None = None):
+    denied = _require_rpa_admin()
+    if denied:
+        return denied
+
+    payload = _request_json()
+    final_limit = _int_limit(limit or payload.get("limit"), default=25, maximum=100)
+    final_search = _string_or_none(search or payload.get("search"))
+
+    fields = [
+        "name",
+        "contact_name",
+        "first_name",
+        "last_name",
+        "email",
+        "phone",
+        "vehicle_interest",
+        "source",
+        "save_target",
+        "ghl_tag",
+        "ghl_sync_status",
+        "ghl_sync_message",
+        "ghl_contact_url",
+        "rpa_job",
+        "last_synced_at",
+        "modified",
+    ]
+
+    or_filters = None
+    if final_search:
+        like = f"%{final_search}%"
+        or_filters = [
+            ["DMS CRM Contact", "name", "like", like],
+            ["DMS CRM Contact", "contact_name", "like", like],
+            ["DMS CRM Contact", "email", "like", like],
+            ["DMS CRM Contact", "phone", "like", like],
+            ["DMS CRM Contact", "rpa_job", "like", like],
+        ]
+
+    try:
+        rows = frappe.get_all(
+            "DMS CRM Contact",
+            fields=fields,
+            or_filters=or_filters,
+            order_by="modified desc",
+            limit_page_length=final_limit,
+        )
+        return success(data={"rows": rows, "total": len(rows), "limit": final_limit, "search": final_search})
+    except Exception as exc:
+        return error("Failed to list saved RPA contacts.", details=str(exc), http_status_code=500)
+
+
+@frappe.whitelist(allow_guest=True)
 def get_job_status(job_id: str | None = None):
     denied = _require_rpa_admin()
     if denied:
@@ -165,6 +231,7 @@ def module_info():
                 "check_session": "/api/method/dms.api.rpa_gohighlevel.check_session",
                 "open_login": "/api/method/dms.api.rpa_gohighlevel.open_login",
                 "save_contact": "/api/method/dms.api.rpa_gohighlevel.save_contact",
+                "list_contacts": "/api/method/dms.api.rpa_gohighlevel.list_contacts",
                 "get_job_status": "/api/method/dms.api.rpa_gohighlevel.get_job_status",
             },
             "notes": [
