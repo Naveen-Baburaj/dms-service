@@ -309,40 +309,66 @@ def _fill_by_label_or_placeholder(page, labels: list[str], value: str | None, re
     return False
 
 
-def _fill_phone(page, phone: str | None) -> bool:
+def _normalize_phone_for_ghl(phone: str | None) -> str:
+    """GHL test/demo phone input must be plain 10 digits.
+
+    Examples:
+      +919876543210 -> 9876543210
+      98765 43210   -> 9876543210
+      9000012345    -> 9000012345
+    """
     if not phone:
+        return ""
+    digits = re.sub(r"\D", "", str(phone))
+    if len(digits) > 10:
+        digits = digits[-10:]
+    return digits
+
+
+def _fill_phone(page, phone: str | None) -> bool:
+    phone_digits = _normalize_phone_for_ghl(phone)
+    if not phone_digits:
         return False
 
+    # Do not type +91 or any plus sign. Type only 10 digits.
     candidates = [
         page.locator("input[type='tel']"),
         page.get_by_placeholder(re.compile("phone|mobile|number", re.I)),
         page.get_by_label(re.compile("phone|mobile", re.I)),
-        page.locator("input").filter(has_text=re.compile("")),
+        page.locator("input[name*='phone' i]"),
+        page.locator("input[id*='phone' i]"),
     ]
 
-    for locator in candidates[:3]:
+    for locator in candidates:
         try:
-            locator.first.scroll_into_view_if_needed(timeout=3000)
-            locator.first.click(timeout=3000)
-            locator.first.fill(phone, timeout=4000)
+            field = locator.first
+            field.scroll_into_view_if_needed(timeout=5000)
+            field.click(timeout=5000)
+            page.keyboard.press("Control+A")
+            page.keyboard.press("Backspace")
+            page.keyboard.type(phone_digits)
+            page.wait_for_timeout(500)
             return True
         except Exception:
             continue
 
+    # Last fallback: click near the visible Phone label, to the right/below,
+    # avoiding the country-code dropdown area.
     try:
         label = page.get_by_text(re.compile("^Phone$", re.I)).last
-        label.scroll_into_view_if_needed(timeout=3000)
+        label.scroll_into_view_if_needed(timeout=5000)
         box = label.bounding_box()
         if box:
-            page.mouse.click(box["x"] + 170, box["y"] + 42)
+            page.mouse.click(box["x"] + 210, box["y"] + 42)
             page.keyboard.press("Control+A")
-            page.keyboard.type(phone)
+            page.keyboard.press("Backspace")
+            page.keyboard.type(phone_digits)
+            page.wait_for_timeout(500)
             return True
     except Exception:
         pass
 
-    raise RuntimeError("Could not fill GoHighLevel phone input.")
-
+    raise RuntimeError("Could not fill GoHighLevel phone input with 10-digit number.")
 
 def _select_tag(page, tag_name: str) -> None:
     tag_search = ghl_tag_search_text()
