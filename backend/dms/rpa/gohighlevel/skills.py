@@ -370,51 +370,309 @@ def _fill_phone(page, phone: str | None) -> bool:
 
     raise RuntimeError("Could not fill GoHighLevel phone input with 10-digit number.")
 
-def _select_tag(page, tag_name: str) -> None:
-    tag_search = ghl_tag_search_text()
-
+def _tags_label_box(page) -> dict | None:
     try:
-        if page.get_by_text(tag_name, exact=True).count() > 0:
-            return
+        return page.evaluate(
+            """
+            () => {
+              const nodes = Array.from(document.querySelectorAll('label,div,span,p'));
+              const matches = nodes.map(el => {
+                const text = (el.innerText || el.textContent || '').trim();
+                const rect = el.getBoundingClientRect();
+                return { el, text, rect };
+              }).filter(x =>
+                /^Tags?$/i.test(x.text) &&
+                x.rect.width > 0 &&
+                x.rect.height > 0 &&
+                x.rect.left > window.innerWidth * 0.42
+              );
+              const item = matches[matches.length - 1];
+              if (!item) return null;
+              item.el.scrollIntoView({ block: 'center', inline: 'nearest' });
+              const r = item.el.getBoundingClientRect();
+              return { x: r.left, y: r.top, width: r.width, height: r.height, right: r.right, bottom: r.bottom };
+            }
+            """
+        )
+    except Exception:
+        return None
+
+
+def _find_tags_input_rect(page) -> dict | None:
+    return page.evaluate(
+        """
+        () => {
+          const labelNodes = Array.from(document.querySelectorAll('label,div,span,p'));
+          const labels = labelNodes.map(el => {
+            const text = (el.innerText || el.textContent || '').trim();
+            const rect = el.getBoundingClientRect();
+            return { el, text, rect };
+          }).filter(x =>
+            /^Tags?$/i.test(x.text) &&
+            x.rect.width > 0 &&
+            x.rect.height > 0 &&
+            x.rect.left > window.innerWidth * 0.42
+          );
+
+          const label = labels[labels.length - 1];
+          if (!label) return null;
+
+          const lr = label.el.getBoundingClientRect();
+
+          const candidates = Array.from(document.querySelectorAll(
+            'input, [role="combobox"], [role="textbox"], [contenteditable="true"], div'
+          )).map(el => {
+            const text = (el.innerText || el.textContent || '').trim();
+            const rect = el.getBoundingClientRect();
+            const ph = el.getAttribute && (el.getAttribute('placeholder') || el.getAttribute('aria-label') || '');
+            return { el, text, rect, ph };
+          }).filter(x => {
+            const visible = x.rect.width > 0 && x.rect.height > 0;
+            const nearX = x.rect.left > window.innerWidth * 0.42;
+            const belowLabel = x.rect.top >= lr.bottom - 10 && x.rect.top <= lr.bottom + 70;
+            const looksLikeInput =
+              x.el.tagName === 'INPUT' ||
+              x.el.getAttribute('role') === 'combobox' ||
+              x.el.getAttribute('role') === 'textbox' ||
+              /add tags?|tags?/i.test(x.ph || '') ||
+              /add tags?/i.test(x.text || '');
+            return visible && nearX && belowLabel && looksLikeInput;
+          }).sort((a, b) => {
+            const da = Math.abs(a.rect.top - lr.bottom) + Math.abs(a.rect.left - lr.left);
+            const db = Math.abs(b.rect.top - lr.bottom) + Math.abs(b.rect.left - lr.left);
+            return da - db;
+          });
+
+          const target = candidates[0];
+          if (!target) {
+            return {
+              found: false,
+              label: { x: lr.left, y: lr.top, bottom: lr.bottom, right: lr.right }
+            };
+          }
+
+          const r = target.rect;
+          return {
+            found: true,
+            x: r.left,
+            y: r.top,
+            width: r.width,
+            height: r.height,
+            right: r.right,
+            bottom: r.bottom,
+            label: { x: lr.left, y: lr.top, bottom: lr.bottom, right: lr.right }
+          };
+        }
+        """
+    )
+
+
+def _focus_tags_input_recording_way(page) -> dict:
+    """Focus Tags input exactly as seen in recording."""
+    try:
+        page.mouse.wheel(0, 1800)
+        page.wait_for_timeout(900)
     except Exception:
         pass
 
-    clicked = False
-    for locator in [
-        page.get_by_label(re.compile("tags?", re.I)),
-        page.get_by_placeholder(re.compile("tags?|add tags?|select tags?", re.I)),
-        page.locator("input").filter(has_text=re.compile("")),
-    ][:2]:
-        try:
-            locator.first.scroll_into_view_if_needed(timeout=4000)
-            locator.first.click(timeout=4000)
-            clicked = True
-            break
-        except Exception:
-            continue
+    rect = _find_tags_input_rect(page)
 
-    if not clicked:
-        label = page.get_by_text(re.compile("^Tags$", re.I)).last
-        label.scroll_into_view_if_needed(timeout=5000)
-        box = label.bounding_box()
-        if not box:
-            raise RuntimeError("Could not locate the Tags field label.")
-        page.mouse.click(box["x"] + 130, box["y"] + 42)
+    if isinstance(rect, dict) and rect.get("found"):
+        page.mouse.click(rect["x"] + 35, rect["y"] + rect["height"] / 2)
+        page.wait_for_timeout(600)
+        return rect
 
-    page.keyboard.type(tag_search)
-    page.wait_for_timeout(1200)
+    # Fallback from the recording: Tags label -> input below it.
+    label = _tags_label_box(page)
+    if not label:
+        raise RuntimeError("Could not locate Tags label/input.")
 
-    option_candidates = [
-        page.get_by_text(tag_name, exact=True),
-        page.locator("[role='option']").filter(has_text=re.compile(re.escape(tag_name), re.I)),
-        page.locator("div").filter(has_text=re.compile(rf"^{re.escape(tag_name)}$", re.I)),
+    # Click inside the visible Add Tags input below label.
+    x = label["x"] + 35
+    y = label["bottom"] + 33
+    page.mouse.click(x, y)
+    page.wait_for_timeout(600)
+
+    return {
+        "found": False,
+        "x": label["x"],
+        "y": label["bottom"] + 8,
+        "width": 360,
+        "height": 42,
+        "right": label["x"] + 360,
+        "bottom": label["bottom"] + 50,
+        "label": label,
+    }
+
+
+def _click_second_tag_dropdown_row(page, input_rect: dict, tag_name: str) -> None:
+    """Recording-based selector.
+
+    After typing dms:
+      row 1 = dms:
+      row 2 = dms_rpa_demo:
+
+    So click the second dropdown row below the input.
+    """
+    # First try JS text contains, not exact, because recording shows trailing colon/extra char.
+    result = page.evaluate(
+        """
+        (tagName) => {
+          const nodes = Array.from(document.querySelectorAll('[role="option"], li, div, span, p'));
+          const matches = nodes.map(el => {
+            const text = (el.innerText || el.textContent || '').trim();
+            const rect = el.getBoundingClientRect();
+            return { el, text, rect };
+          }).filter(x => {
+            const visible = x.rect.width > 0 && x.rect.height > 0;
+            const containsTag = x.text.includes(tagName);
+            const notCreate = !/^\\+?\\s*Create/i.test(x.text);
+            const rightDrawer = x.rect.left > window.innerWidth * 0.42;
+            return visible && containsTag && notCreate && rightDrawer;
+          }).sort((a, b) => a.rect.top - b.rect.top);
+
+          if (matches.length) {
+            const target = matches[matches.length - 1].el;
+            target.click();
+            return { clicked: true, method: 'text-contains', text: matches[matches.length - 1].text };
+          }
+
+          return { clicked: false, method: 'text-contains', count: 0 };
+        }
+        """,
+        tag_name,
+    )
+
+    if isinstance(result, dict) and result.get("clicked"):
+        page.wait_for_timeout(1500)
+        return
+
+    # Coordinate fallback matching the recording:
+    # input bottom -> second dropdown row center is roughly +75 to +90 px.
+    x_candidates = [
+        input_rect["x"] + 80,
+        input_rect["x"] + 150,
+        input_rect["x"] + 250,
     ]
-    _click_locator_candidates(page, option_candidates, f"existing tag {tag_name}", timeout_each=8000)
+    y_candidates = [
+        input_rect["bottom"] + 76,
+        input_rect["bottom"] + 88,
+        input_rect["bottom"] + 100,
+    ]
 
-    page.wait_for_timeout(700)
-    if page.get_by_text(tag_name, exact=True).count() <= 0:
-        raise RuntimeError(f"Tag '{tag_name}' was not visibly selected.")
+    for y in y_candidates:
+        for x in x_candidates:
+            try:
+                page.mouse.click(x, y)
+                page.wait_for_timeout(1500)
+                if _confirm_tag_chip_selected_in_drawer(page, tag_name):
+                    return
+            except Exception:
+                continue
 
+    # Keyboard fallback. Dropdown order in recording: row1 dms, row2 dms_rpa_demo.
+    try:
+        page.keyboard.press("ArrowDown")
+        page.wait_for_timeout(300)
+        page.keyboard.press("ArrowDown")
+        page.wait_for_timeout(300)
+        page.keyboard.press("Enter")
+        page.wait_for_timeout(1800)
+        return
+    except Exception as exc:
+        raise RuntimeError(f"Could not click/select second tag dropdown row. JS result: {result}. Error: {exc}")
+
+
+def _confirm_tag_chip_selected_in_drawer(page, tag_name: str) -> bool:
+    try:
+        result = page.evaluate(
+            """
+            (tagName) => {
+              const bodyText = document.body.innerText || '';
+              if (!bodyText.includes(tagName)) return false;
+
+              const labelNodes = Array.from(document.querySelectorAll('label,div,span,p'));
+              const labels = labelNodes.map(el => {
+                const text = (el.innerText || el.textContent || '').trim();
+                const rect = el.getBoundingClientRect();
+                return { el, text, rect };
+              }).filter(x =>
+                /^Tags?$/i.test(x.text) &&
+                x.rect.width > 0 &&
+                x.rect.height > 0 &&
+                x.rect.left > window.innerWidth * 0.42
+              );
+
+              const label = labels[labels.length - 1];
+              if (!label) return bodyText.includes(tagName);
+
+              const lr = label.el.getBoundingClientRect();
+
+              const nodes = Array.from(document.querySelectorAll('div,span,p,button'));
+              return nodes.some(el => {
+                const text = (el.innerText || el.textContent || '').trim();
+                const rect = el.getBoundingClientRect();
+                const visible = rect.width > 0 && rect.height > 0;
+                const hasTag = text.includes(tagName);
+                const nearTags =
+                  rect.left > window.innerWidth * 0.42 &&
+                  rect.top >= lr.top - 20 &&
+                  rect.top <= lr.top + 180;
+                return visible && hasTag && nearTags;
+              });
+            }
+            """,
+            tag_name,
+        )
+        return bool(result)
+    except Exception:
+        return False
+
+
+def _select_tag(page, tag_name: str) -> None:
+    """Select existing dms_rpa_demo by the exact UI behavior from recording."""
+    last_error = None
+
+    for attempt in range(1, 5):
+        try:
+            input_rect = _focus_tags_input_recording_way(page)
+
+            # Clear and type dms. Do not type full tag.
+            page.keyboard.press("Control+A")
+            page.keyboard.press("Backspace")
+            page.keyboard.type("dms")
+            page.wait_for_timeout(2500)
+
+            _click_second_tag_dropdown_row(page, input_rect, tag_name)
+            page.wait_for_timeout(1500)
+
+            # Recording note: dropdown may require click outside before Save.
+            try:
+                # Click slightly above Save / blank drawer area, away from Phone.
+                page.mouse.click(input_rect["x"] + 20, max(20, input_rect["y"] - 20))
+                page.wait_for_timeout(800)
+            except Exception:
+                pass
+
+            if _confirm_tag_chip_selected_in_drawer(page, tag_name):
+                return
+
+            # final weak but useful confirmation in the drawer context
+            body = _body_text(page, timeout=3000)
+            if tag_name in body and "Save" in body and ("Tags" in body or "Add Tags" in body):
+                return
+
+            raise RuntimeError("Tag was selected but chip was not confirmed.")
+
+        except Exception as exc:
+            last_error = exc
+            try:
+                page.keyboard.press("Escape")
+            except Exception:
+                pass
+            page.wait_for_timeout(1200)
+
+    raise RuntimeError(f"Could not select existing tag '{tag_name}' using recording-based second-row flow. Last error: {last_error}")
 
 def _click_save(page) -> None:
     locators = [
@@ -437,7 +695,7 @@ def _click_save(page) -> None:
 
 
 def _wait_for_contact_detail_or_success(page, contact: ContactPayload, tag_name: str) -> bool:
-    deadline = time.monotonic() + 75
+    deadline = time.monotonic() + 90
     expected_bits = [contact.first_name]
     if contact.last_name:
         expected_bits.append(contact.last_name)
@@ -446,17 +704,16 @@ def _wait_for_contact_detail_or_success(page, contact: ContactPayload, tag_name:
 
     while time.monotonic() < deadline:
         try:
-            text = _body_text(page, timeout=5000)
-            if any(bit in text for bit in expected_bits):
-                return True
-            if tag_name in text and ("Contact" in text or "Contacts" in text):
+            text = _body_text(page, timeout=6000)
+            contact_found = any(bit in text for bit in expected_bits)
+            tag_found = tag_name in text
+            if contact_found and tag_found:
                 return True
         except Exception:
             pass
-        page.wait_for_timeout(2000)
+        page.wait_for_timeout(2500)
 
     return False
-
 
 def _verify_in_smart_list(page, contacts_url: str, contact: ContactPayload, tag_name: str) -> bool:
     try:
