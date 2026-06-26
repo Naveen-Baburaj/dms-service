@@ -32,5 +32,11 @@ Thumbs.db
 playwright-report/
 test-results/
 
+# RPA runtime files
+backend/.rpa_sessions/
+backend/sites/*/private/rpa_sessions/
+*.storage_state.json
+ghl_storage_state.json
+
 .env
 backend/.env
