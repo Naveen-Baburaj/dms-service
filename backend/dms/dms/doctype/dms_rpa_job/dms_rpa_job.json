@@ -1,0 +1,7 @@
+{
+  "name": "DMS RPA Job",
+  "module": "DMS",
+  "doctype": "DocType",
+  "fields": [],
+  "permissions": []
+}
