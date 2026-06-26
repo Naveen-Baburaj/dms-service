@@ -1,0 +1,26 @@
+{
+  "name": "DMS GHL Session",
+  "module": "DMS",
+  "doctype": "DocType",
+  "custom": 0,
+  "istable": 0,
+  "editable_grid": 1,
+  "allow_rename": 1,
+  "autoname": "field:session_name",
+  "is_submittable": 0,
+  "track_changes": 1,
+  "sort_field": "modified",
+  "sort_order": "DESC",
+  "fields": [
+    { "fieldname": "session_name", "fieldtype": "Data", "label": "Session Name", "reqd": 1, "unique": 1, "in_list_view": 1 },
+    { "fieldname": "status", "fieldtype": "Data", "label": "Status", "default": "Unknown", "in_list_view": 1 },
+    { "fieldname": "state_file_path", "fieldtype": "Data", "label": "State File Path" },
+    { "fieldname": "contacts_url", "fieldtype": "Data", "label": "Contacts URL" },
+    { "fieldname": "last_login_at", "fieldtype": "Datetime", "label": "Last Login At" },
+    { "fieldname": "last_checked_at", "fieldtype": "Datetime", "label": "Last Checked At" },
+    { "fieldname": "last_message", "fieldtype": "Small Text", "label": "Last Message" }
+  ],
+  "permissions": [
+    { "role": "Group Admin", "read": 1, "write": 1, "create": 1, "delete": 1 }
+  ]
+}
