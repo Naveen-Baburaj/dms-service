@@ -451,8 +451,14 @@ def _is_followup_query(query: str) -> bool:
 
 
 def _routing_query(user_query: str, conversation_context: str | None) -> str:
-    if conversation_context and _is_followup_query(user_query):
-        return f"{conversation_context}\nCurrent clarification: {user_query}"
+    if conversation_context:
+        company_followup = _final_company_only_followup_query_v2(user_query, conversation_context)
+        if company_followup:
+            return company_followup
+
+        if _final_is_followup_query(user_query):
+            return f"{conversation_context}\nCurrent clarification: {user_query}"
+
     return user_query
 
 
@@ -1290,9 +1296,115 @@ def _final_is_followup_query(query: str) -> bool:
     ])
 
 
+# FOLLOWUP_MEMORY_V2_START
+def _final_company_only_followup_query_v2(user_query: str, conversation_context: str | None) -> str | None:
+    """Rewrite short company-only follow-ups using the latest relevant chat context.
+
+    Example:
+      context: sales for honda and nexa over the last 5 months
+      query:   for jaguar
+      output:  sales for Jaguar over the last 5 months
+
+    This runs before Gemini routing, so Gemini receives a complete query instead
+    of a fragment like "for jaguar".
+    """
+    if not conversation_context:
+        return None
+
+    q = user_query.lower().strip()
+    q = re.sub(r"[^a-zA-Z\s]", " ", q)
+    q = re.sub(r"\s+", " ", q).strip()
+
+    for prefix in ["what about ", "how about ", "same for ", "show for ", "for ", "about "]:
+        if q.startswith(prefix):
+            q = q[len(prefix):].strip()
+
+    if not q:
+        return None
+
+    words = q.split()
+    if len(words) > 6:
+        return None
+
+    joiners = {"and", "or", "vs", "versus"}
+    company_aliases = {alias for alias, company in COMPANY_ALIASES.items() if company}
+    company_words = [word for word in words if word not in joiners]
+
+    if not company_words:
+        return None
+
+    if not all(word in company_aliases for word in company_words):
+        return None
+
+    companies: list[str] = []
+    for word in company_words:
+        company = _company_name_from_alias(word)
+        if company and company not in companies:
+            companies.append(company)
+
+    if not companies:
+        return None
+
+    lines = [line.strip() for line in conversation_context.splitlines() if line.strip()]
+
+    latest_relevant = ""
+    for line in reversed(lines):
+        lower = line.lower()
+        if any(term in lower for term in [
+            "sales", "revenue", "vehicle sale", "tenant comparison",
+            "service", "service job", "inventory", "stock",
+            "lead", "invoice", "booking", "test drive",
+        ]):
+            latest_relevant = lower
+            break
+
+    if not latest_relevant:
+        latest_relevant = conversation_context.lower()
+
+    if any(term in latest_relevant for term in ["sales", "revenue", "vehicle sale", "tenant comparison"]):
+        metric = "sales"
+    elif any(term in latest_relevant for term in ["service", "service job", "job card"]):
+        metric = "service jobs"
+    elif any(term in latest_relevant for term in ["inventory", "stock", "vehicle stock"]):
+        metric = "inventory"
+    elif any(term in latest_relevant for term in ["lead", "leads"]):
+        metric = "leads"
+    elif any(term in latest_relevant for term in ["invoice", "invoices"]):
+        metric = "invoices"
+    elif any(term in latest_relevant for term in ["booking", "bookings"]):
+        metric = "bookings"
+    elif any(term in latest_relevant for term in ["test drive", "test drives"]):
+        metric = "test drives"
+    else:
+        return None
+
+    # Prefer the latest relevant line for time range, then fall back to full context.
+    time_source = latest_relevant
+    full_context = conversation_context.lower()
+
+    month_match = re.search(r"last\s+(\d+)\s+months?", time_source) or re.search(r"last\s+(\d+)\s+months?", full_context)
+    if month_match:
+        time_phrase = f" over the last {month_match.group(1)} months"
+    elif "all available months" in time_source:
+        time_phrase = " over all available months"
+    elif "latest records" in time_source:
+        time_phrase = " latest records"
+    else:
+        time_phrase = ""
+
+    company_text = " and ".join(companies)
+    return f"{metric} for {company_text}{time_phrase}".strip()
+# FOLLOWUP_MEMORY_V2_END
+
 def _routing_query(user_query: str, conversation_context: str | None) -> str:
-    if conversation_context and _final_is_followup_query(user_query):
-        return f"{conversation_context}\nCurrent clarification: {user_query}"
+    if conversation_context:
+        company_followup = _final_company_only_followup_query_v2(user_query, conversation_context)
+        if company_followup:
+            return company_followup
+
+        if _final_is_followup_query(user_query):
+            return f"{conversation_context}\nCurrent clarification: {user_query}"
+
     return user_query
 
 
