@@ -69,6 +69,32 @@ export interface RpaJobStatus {
   completed_at?: string;
 }
 
+export interface RpaSavedContact {
+  name: string;
+  contact_name?: string;
+  first_name?: string;
+  last_name?: string;
+  email?: string;
+  phone?: string;
+  vehicle_interest?: string;
+  source?: string;
+  save_target?: string;
+  ghl_tag?: string;
+  ghl_sync_status?: string;
+  ghl_sync_message?: string;
+  ghl_contact_url?: string;
+  rpa_job?: string;
+  last_synced_at?: string;
+  modified?: string;
+}
+
+export interface RpaContactListResult {
+  rows: RpaSavedContact[];
+  total: number;
+  limit?: number;
+  search?: string | null;
+}
+
 type FrappeRpaEnvelope<T> = {
   message?: {
     success?: boolean;
@@ -178,6 +204,24 @@ export function saveRpaContact(opts: {
       contact: opts.contact,
     },
     timeoutMs: opts.target === 'dms' ? 60000 : 240000,
+  });
+}
+
+export function listRpaContacts(opts: {
+  role: string;
+  company: string;
+  limit?: number;
+  search?: string;
+}): Promise<RpaContactListResult> {
+  return postRpa<RpaContactListResult>({
+    endpoint: 'dms.api.rpa_gohighlevel.list_contacts',
+    role: opts.role,
+    company: opts.company,
+    body: {
+      limit: opts.limit ?? 25,
+      search: opts.search?.trim() || undefined,
+    },
+    timeoutMs: 30000,
   });
 }
 
