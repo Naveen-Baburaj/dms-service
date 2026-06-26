@@ -8,7 +8,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
-import { apiClient } from '@/services/api/client';
+import { apiClient, unwrapFrappe } from '@/services/api/client';
 import { formatCurrency, formatDate } from '@/lib/utils';
 
 const PAYMENT_COLORS: Record<string, string> = {
@@ -24,8 +24,10 @@ export default function InvoicesPage() {
   const { data, isLoading } = useQuery({
     queryKey: ['invoices'],
     queryFn: async () => {
-      const res = await apiClient.get('/api/method/dms.api.invoices.get_invoices');
-      return res.data?.data ?? { data: [], total: 0 };
+      const res = await apiClient.get('/method/dms.api.frontend_demo.records', {
+        params: { resource: 'invoices', page: 1, page_size: 200 },
+      });
+      return unwrapFrappe<{ data: Record<string, unknown>[]; total: number }>(res.data);
     },
   });
 

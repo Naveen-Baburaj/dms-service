@@ -1,35 +1,34 @@
-import { apiClient } from './client';
+import { apiClient, unwrapFrappe } from './client';
 import type { Lead, CreateLeadDTO, UpdateLeadDTO, LeadsListResponse, LeadsFilter } from '@/types';
 
 export const leadsApi = {
   getAll: async (filters: LeadsFilter = {}): Promise<LeadsListResponse> => {
-    const { data } = await apiClient.get<{ success: boolean; data: LeadsListResponse }>('/leads', {
-      params: filters,
+    const { data } = await apiClient.get('/method/dms.api.frontend_demo.records', {
+      params: { resource: 'leads', ...filters },
     });
-    return data.data;
+    return unwrapFrappe<LeadsListResponse>(data);
   },
 
   getById: async (id: string): Promise<Lead> => {
-    const { data } = await apiClient.get<{ success: boolean; data: Lead }>(`/leads/${id}`);
-    return data.data;
+    const result = await leadsApi.getAll({ page: 1, page_size: 200 });
+    const lead = result.data.find((item) => item.id === id || item.name === id);
+    if (!lead) throw new Error('Lead not found');
+    return lead;
   },
 
-  create: async (payload: CreateLeadDTO): Promise<Lead> => {
-    const { data } = await apiClient.post<{ success: boolean; data: Lead }>('/leads', payload);
-    return data.data;
+  create: async (_payload: CreateLeadDTO): Promise<Lead> => {
+    throw new Error('Create lead is not connected in demo mode yet.');
   },
 
-  update: async ({ id, ...payload }: UpdateLeadDTO): Promise<Lead> => {
-    const { data } = await apiClient.put<{ success: boolean; data: Lead }>(`/leads/${id}`, payload);
-    return data.data;
+  update: async (_payload: UpdateLeadDTO): Promise<Lead> => {
+    throw new Error('Update lead is not connected in demo mode yet.');
   },
 
-  delete: async (id: string): Promise<void> => {
-    await apiClient.delete(`/leads/${id}`);
+  delete: async (_id: string): Promise<void> => {
+    throw new Error('Delete lead is disabled in demo mode.');
   },
 
-  convertToCustomer: async (id: string): Promise<{ customer_id: string }> => {
-    const { data } = await apiClient.post(`/leads/${id}/convert`);
-    return data.data;
+  convertToCustomer: async (_id: string): Promise<{ customer_id: string }> => {
+    throw new Error('Lead conversion is not connected in demo mode yet.');
   },
 };

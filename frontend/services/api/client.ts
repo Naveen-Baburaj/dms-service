@@ -9,6 +9,41 @@ function isMockToken(token: string | null): boolean {
   return Boolean(token && (token.endsWith('.mock_sig') || token === 'mock_refresh'));
 }
 
+function getStoredUser(): { role?: string; company?: string } | null {
+  if (typeof window === 'undefined') return null;
+
+  try {
+    const raw = localStorage.getItem('dms-auth');
+    if (!raw) return null;
+
+    const parsed = JSON.parse(raw);
+    return parsed?.state?.user ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function getDemoHeaders(): Record<string, string> {
+  const user = getStoredUser();
+
+  if (!user) return {};
+
+  if (user.role === 'group_admin' || user.company === 'Group') {
+    return { 'x-user-role': 'service_centre_admin' };
+  }
+
+  const tenantMap: Record<string, string> = {
+    Honda: 'toyota',
+    NEXA: 'suzuki',
+    Jaguar: 'hyundai',
+  };
+
+  return {
+    'x-user-role': 'tenant_user',
+    'x-tenant-id': tenantMap[user.company ?? ''] ?? String(user.company ?? '').toLowerCase(),
+  };
+}
+
 export const tokenStorage = {
   getAccess: (): string | null =>
     typeof window !== 'undefined' ? localStorage.getItem(ACCESS_TOKEN_KEY) : null,
@@ -51,8 +86,13 @@ apiClient.interceptors.request.use(
   (config) => {
     const token = tokenStorage.getAccess();
 
-    // Demo mock JWTs are only for the Next.js frontend middleware.
-    // Do not send them to Frappe because Frappe will reject the fake signature.
+    config.headers = config.headers ?? {};
+
+    const demoHeaders = getDemoHeaders();
+    Object.entries(demoHeaders).forEach(([key, value]) => {
+      config.headers[key] = value;
+    });
+
     if (token && !isMockToken(token)) {
       config.headers.Authorization = `Bearer ${token}`;
     }
@@ -71,8 +111,6 @@ apiClient.interceptors.response.use(
       const accessToken = tokenStorage.getAccess();
       const refreshToken = tokenStorage.getRefresh();
 
-      // In demo mode, keep the mock frontend session alive.
-      // Some legacy REST endpoints may fail, but they should not log the user out.
       if (isMockToken(accessToken) || isMockToken(refreshToken)) {
         return Promise.reject(error);
       }
@@ -121,3 +159,26 @@ apiClient.interceptors.response.use(
     return Promise.reject(error);
   },
 );
+
+export function unwrapFrappe<T>(raw: unknown): T {
+  const value = raw as {
+    message?: {
+      success?: boolean;
+      data?: T;
+      message?: string;
+    };
+    success?: boolean;
+    data?: T;
+    message?: string;
+  };
+
+  if (value.message?.success === false) {
+    throw new Error(value.message.message || 'Request failed');
+  }
+
+  if (value.success === false) {
+    throw new Error(value.message || 'Request failed');
+  }
+
+  return (value.message?.data ?? value.data ?? raw) as T;
+}

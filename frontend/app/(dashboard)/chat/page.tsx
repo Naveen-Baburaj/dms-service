@@ -90,14 +90,20 @@ interface ServiceCountPayload {
 
 interface InventoryRow {
   tenant_id?: string;
-  category: string;
-  stock: number;
+  tenant_name?: string;
+  category?: string;
+  stock?: number;
+  vehicle_name?: string;
+  model?: string;
+  variant?: string;
+  stock_status?: string;
 }
 
 interface InventoryPayload {
   rows: InventoryRow[];
   total_stock?: number;
   low_stock_items?: InventoryRow[];
+  status_counts?: Record<string, number>;
 }
 
 interface TenantComparisonPayload {
@@ -189,22 +195,69 @@ function ServiceCountWidget({ payload }: { payload: unknown }) {
 function InventoryTableWidget({ payload }: { payload: unknown }) {
   const p = payload as InventoryPayload;
   const rows = p.rows ?? [];
+  const hasVehicleRows = rows.some((row) => row.vehicle_name || row.model || row.variant || row.stock_status);
+  const showTenant = rows.some((row) => row.tenant_id !== undefined || row.tenant_name !== undefined);
+
+  function clean(value: unknown): string {
+    if (value == null || value === '') return '-';
+    return String(value).replace(/_/g, ' ');
+  }
 
   return (
     <div className="mt-3 rounded-xl border border-border/50 bg-background/60 p-4">
       <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-3">
         Inventory
         {p.total_stock != null && (
-          <span className="ml-2 font-normal text-foreground">({p.total_stock.toLocaleString()} total units)</span>
+          <span className="ml-2 font-normal text-foreground">
+            ({p.total_stock.toLocaleString()} {hasVehicleRows ? 'vehicle record(s)' : 'total units'})
+          </span>
         )}
       </p>
+
       {rows.length === 0 ? (
         <p className="text-xs text-muted-foreground text-center py-2">No inventory data.</p>
+      ) : hasVehicleRows ? (
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="border-b border-border/50">
+              {showTenant && <th className="text-left pb-1.5 font-medium text-muted-foreground">Tenant</th>}
+              <th className="text-left pb-1.5 font-medium text-muted-foreground">Vehicle</th>
+              <th className="text-left pb-1.5 font-medium text-muted-foreground">Model</th>
+              <th className="text-left pb-1.5 font-medium text-muted-foreground">Variant</th>
+              <th className="text-right pb-1.5 font-medium text-muted-foreground">Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row, i) => {
+              const status = clean(row.stock_status);
+              const isAvailable = status.toLowerCase() === 'in stock' || status.toLowerCase() === 'available';
+
+              return (
+                <tr key={i} className="border-b border-border/30 last:border-0">
+                  {showTenant && (
+                    <td className="py-1.5 capitalize text-muted-foreground">{clean(row.tenant_name ?? row.tenant_id)}</td>
+                  )}
+                  <td className="py-1.5">{clean(row.vehicle_name ?? row.category)}</td>
+                  <td className="py-1.5">{clean(row.model)}</td>
+                  <td className="py-1.5">{clean(row.variant)}</td>
+                  <td className="py-1.5 text-right">
+                    <span className={cn(
+                      'inline-flex rounded-full px-1.5 py-0.5 text-[10px] font-medium',
+                      isAvailable ? 'bg-emerald-500/10 text-emerald-600' : 'bg-amber-500/10 text-amber-600',
+                    )}>
+                      {status}
+                    </span>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
       ) : (
         <table className="w-full text-xs">
           <thead>
             <tr className="border-b border-border/50">
-              {rows[0]?.tenant_id !== undefined && <th className="text-left pb-1.5 font-medium text-muted-foreground">Tenant</th>}
+              {showTenant && <th className="text-left pb-1.5 font-medium text-muted-foreground">Tenant</th>}
               <th className="text-left pb-1.5 font-medium text-muted-foreground">Category</th>
               <th className="text-right pb-1.5 font-medium text-muted-foreground">Stock</th>
               <th className="text-right pb-1.5 font-medium text-muted-foreground">Status</th>
@@ -212,14 +265,16 @@ function InventoryTableWidget({ payload }: { payload: unknown }) {
           </thead>
           <tbody>
             {rows.map((row, i) => {
-              const isLow = row.stock < 100;
+              const stock = Number(row.stock ?? 0);
+              const isLow = stock < 100;
+
               return (
                 <tr key={i} className="border-b border-border/30 last:border-0">
-                  {row.tenant_id !== undefined && (
-                    <td className="py-1.5 capitalize text-muted-foreground">{row.tenant_id}</td>
+                  {showTenant && (
+                    <td className="py-1.5 capitalize text-muted-foreground">{clean(row.tenant_name ?? row.tenant_id)}</td>
                   )}
-                  <td className="py-1.5 capitalize">{row.category.replace(/_/g, ' ')}</td>
-                  <td className="py-1.5 text-right font-mono">{row.stock}</td>
+                  <td className="py-1.5 capitalize">{clean(row.category)}</td>
+                  <td className="py-1.5 text-right font-mono">{stock.toLocaleString()}</td>
                   <td className="py-1.5 text-right">
                     <span className={cn(
                       'inline-flex rounded-full px-1.5 py-0.5 text-[10px] font-medium',

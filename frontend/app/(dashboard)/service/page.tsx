@@ -8,7 +8,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
-import { apiClient } from '@/services/api/client';
+import { apiClient, unwrapFrappe } from '@/services/api/client';
 import { formatCurrency } from '@/lib/utils';
 
 const STATUS_COLORS: Record<string, string> = {
@@ -25,8 +25,10 @@ export default function ServicePage() {
   const { data, isLoading } = useQuery({
     queryKey: ['service-jobs'],
     queryFn: async () => {
-      const res = await apiClient.get('/api/method/dms.api.service.get_service_jobs');
-      return res.data?.data ?? { data: [], total: 0 };
+      const res = await apiClient.get('/method/dms.api.frontend_demo.records', {
+        params: { resource: 'service_jobs', page: 1, page_size: 200 },
+      });
+      return unwrapFrappe<{ data: Record<string, unknown>[]; total: number }>(res.data);
     },
   });
 
