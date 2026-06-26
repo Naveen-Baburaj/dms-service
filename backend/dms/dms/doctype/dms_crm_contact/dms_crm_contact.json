@@ -12,26 +12,123 @@
   "sort_field": "modified",
   "sort_order": "DESC",
   "fields": [
-    { "fieldname": "contact_name", "fieldtype": "Data", "label": "Contact Name", "reqd": 1, "in_list_view": 1 },
-    { "fieldname": "first_name", "fieldtype": "Data", "label": "First Name", "reqd": 1, "in_list_view": 1 },
-    { "fieldname": "last_name", "fieldtype": "Data", "label": "Last Name", "in_list_view": 1 },
-    { "fieldname": "email", "fieldtype": "Data", "label": "Email", "options": "Email", "in_list_view": 1 },
-    { "fieldname": "phone", "fieldtype": "Data", "label": "Phone", "in_list_view": 1 },
-    { "fieldname": "vehicle_interest", "fieldtype": "Data", "label": "Vehicle Interest" },
-    { "fieldname": "source", "fieldtype": "Data", "label": "Source", "default": "DMS RPA Demo" },
-    { "fieldname": "notes", "fieldtype": "Small Text", "label": "Notes" },
-    { "fieldname": "save_target", "fieldtype": "Select", "label": "Save Target", "options": "DMS Only\nGoHighLevel Only\nBoth", "default": "Both", "in_list_view": 1 },
-    { "fieldname": "ghl_tag", "fieldtype": "Data", "label": "GHL Tag", "default": "dms_rpa_demo" },
-    { "fieldname": "ghl_sync_status", "fieldtype": "Select", "label": "GHL Sync Status", "options": "Not Requested\nQueued\nRunning\nSuccess\nFailed\nLogin Required", "default": "Not Requested", "in_list_view": 1 },
-    { "fieldname": "ghl_sync_message", "fieldtype": "Small Text", "label": "GHL Sync Message" },
-    { "fieldname": "ghl_contact_url", "fieldtype": "Data", "label": "GHL Contact URL" },
-    { "fieldname": "rpa_job", "fieldtype": "Link", "options": "DMS RPA Job", "label": "RPA Job" },
-    { "fieldname": "last_synced_at", "fieldtype": "Datetime", "label": "Last Synced At" },
-    { "fieldname": "company_id", "fieldtype": "Link", "options": "DMS Company", "label": "Company" },
-    { "fieldname": "company_name", "fieldtype": "Data", "label": "Company Name", "fetch_from": "company_id.company_name", "read_only": 1 },
-    { "fieldname": "raw_payload_json", "fieldtype": "Code", "label": "Raw Payload JSON", "options": "JSON" }
+    {
+      "fieldname": "contact_name",
+      "fieldtype": "Data",
+      "label": "Contact Name",
+      "reqd": 1,
+      "in_list_view": 1
+    },
+    {
+      "fieldname": "first_name",
+      "fieldtype": "Data",
+      "label": "First Name",
+      "reqd": 1,
+      "in_list_view": 1
+    },
+    {
+      "fieldname": "last_name",
+      "fieldtype": "Data",
+      "label": "Last Name",
+      "in_list_view": 1
+    },
+    {
+      "fieldname": "email",
+      "fieldtype": "Data",
+      "label": "Email",
+      "options": "Email",
+      "in_list_view": 1
+    },
+    {
+      "fieldname": "phone",
+      "fieldtype": "Data",
+      "label": "Phone",
+      "in_list_view": 1
+    },
+    {
+      "fieldname": "vehicle_interest",
+      "fieldtype": "Data",
+      "label": "Vehicle Interest"
+    },
+    {
+      "fieldname": "source",
+      "fieldtype": "Data",
+      "label": "Source",
+      "default": "DMS RPA Demo"
+    },
+    {
+      "fieldname": "notes",
+      "fieldtype": "Small Text",
+      "label": "Notes"
+    },
+    {
+      "fieldname": "save_target",
+      "fieldtype": "Data",
+      "label": "Save Target",
+      "default": "Both",
+      "in_list_view": 1
+    },
+    {
+      "fieldname": "ghl_tag",
+      "fieldtype": "Data",
+      "label": "GHL Tag",
+      "default": "dms_rpa_demo"
+    },
+    {
+      "fieldname": "ghl_sync_status",
+      "fieldtype": "Data",
+      "label": "GHL Sync Status",
+      "default": "Not Requested",
+      "in_list_view": 1
+    },
+    {
+      "fieldname": "ghl_sync_message",
+      "fieldtype": "Small Text",
+      "label": "GHL Sync Message"
+    },
+    {
+      "fieldname": "ghl_contact_url",
+      "fieldtype": "Data",
+      "label": "GHL Contact URL"
+    },
+    {
+      "fieldname": "rpa_job",
+      "fieldtype": "Link",
+      "options": "DMS RPA Job",
+      "label": "RPA Job"
+    },
+    {
+      "fieldname": "last_synced_at",
+      "fieldtype": "Datetime",
+      "label": "Last Synced At"
+    },
+    {
+      "fieldname": "company_id",
+      "fieldtype": "Link",
+      "options": "DMS Company",
+      "label": "Company"
+    },
+    {
+      "fieldname": "company_name",
+      "fieldtype": "Data",
+      "label": "Company Name",
+      "fetch_from": "company_id.company_name",
+      "read_only": 1
+    },
+    {
+      "fieldname": "raw_payload_json",
+      "fieldtype": "Code",
+      "label": "Raw Payload JSON",
+      "options": "JSON"
+    }
   ],
   "permissions": [
-    { "role": "Group Admin", "read": 1, "write": 1, "create": 1, "delete": 1 }
+    {
+      "role": "Group Admin",
+      "read": 1,
+      "write": 1,
+      "create": 1,
+      "delete": 1
+    }
   ]
 }

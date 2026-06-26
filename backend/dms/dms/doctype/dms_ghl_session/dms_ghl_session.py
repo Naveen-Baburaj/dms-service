@@ -1,8 +1,5 @@
 from frappe.model.document import Document
 
 
-class DmsGhlSession(Document):
+class DMSGHLSession(Document):
     pass
-
-
-globals()["DMS" + "GHL" + "Session"] = DmsGhlSession
