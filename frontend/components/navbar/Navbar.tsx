@@ -67,9 +67,8 @@ export function Navbar() {
       </div>
 
       <div className="ml-auto flex items-center gap-3">
-        <div className="hidden lg:flex flex-col items-end border-r border-border pr-3">
-          <span className="text-sm font-semibold leading-none text-foreground">Genbyte.ai</span>
-          <span className="mt-1 text-[10px] font-medium uppercase tracking-wider text-violet-500">AI Demo</span>
+        <div className="hidden lg:flex items-center border-r border-border pr-3">
+          <span className="text-sm font-bold uppercase tracking-wide text-foreground">GENBYTE.AI</span>
         </div>
 
         {/* Notifications */}

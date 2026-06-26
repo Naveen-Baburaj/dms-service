@@ -1382,7 +1382,7 @@ export default function ChatPage() {
             <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-violet-500 to-indigo-600 shadow-lg shadow-violet-500/25 mb-5">
               <Sparkles className="h-8 w-8 text-white" />
             </div>
-            <h2 className="text-2xl font-bold text-foreground mb-1">Genbyte AI Demo</h2>
+            <h2 className="text-2xl font-bold text-foreground mb-1">Chat Agent Beta</h2>
             <p className="text-sm text-muted-foreground mb-8 text-center max-w-sm">
               Ask about customers, sales, inventory, invoices, or tenant performance using scoped DMS data.
             </p>
