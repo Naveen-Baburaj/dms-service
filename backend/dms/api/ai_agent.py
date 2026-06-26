@@ -1410,24 +1410,44 @@ def _routing_query(user_query: str, conversation_context: str | None) -> str:
 
 def _final_llm_route(query: str) -> dict[str, Any]:
     if not ENABLE_GEMINI_INTENT:
-        return {}
+        return {
+            "_llm_status": "disabled",
+            "_llm_error": "ENABLE_GEMINI_INTENT is false",
+        }
 
     api_key = os.getenv("GEMINI_API_KEY") or frappe.conf.get("gemini_api_key") or frappe.conf.get("GEMINI_API_KEY")
     if not api_key:
-        return {}
+        return {
+            "_llm_status": "missing_api_key",
+            "_llm_error": "GEMINI_API_KEY/gemini_api_key not found in environment or site config",
+        }
 
     try:
         from google import genai
         from google.genai import types
-    except Exception:
-        return {}
+    except Exception as exc:
+        return {
+            "_llm_status": "import_failed",
+            "_llm_error": str(exc)[:500],
+        }
 
     prompt = f"""
-You are a semantic planner for a Dealer Management System chatbot.
+You are the PRIMARY semantic planner for a Dealer Management System chatbot.
 
 Return only JSON. No markdown.
 
-Possible intents:
+The user may ask for:
+- KPI summaries
+- charts/widgets
+- tenant/company comparisons
+- table/list/detail lookups
+- specific fields like phone number, email, status, vehicle, amount, invoice, tenant/company
+- follow-up questions using prior context
+
+The backend will enforce tenant permissions and safely query the database.
+You do not authorize access. You only plan the data operation.
+
+Supported intents:
 - record_lookup
 - dashboard_charts
 - tenant_comparison
@@ -1437,7 +1457,7 @@ Possible intents:
 - knowledge_lookup
 - out_of_scope
 
-Possible resources:
+Supported resources:
 - leads
 - customers
 - sales
@@ -1447,28 +1467,38 @@ Possible resources:
 - invoices
 - vehicles
 
-Extract:
-- intent
-- resource
+Available companies:
+- Honda
+- NEXA
+- Jaguar
+
+Return these fields:
+- intent: one supported intent
+- resource: one supported resource or null
 - companies: array using Honda, NEXA, Jaguar only
 - month_limit: integer or null
-- search_text: person/customer/model/search phrase or null
-- pagination_action: one of first, next, remaining, null
+- search_text: person/customer/model/invoice/search phrase or null
+- requested_fields: array of fields the user wants, such as mobile_no, email, company_name, status, model, final_price, total_amount
+- pagination_action: first, next, remaining, or null
 - wants_all_charts: boolean
-- confidence: number 0 to 1
+- confidence: number from 0 to 1
 
-Rules:
-- "compare sales of honda and nexa" is tenant_comparison, companies ["Honda","NEXA"], not record_lookup.
-- "sales for honda and nexa" is tenant_comparison, companies ["Honda","NEXA"], not record_lookup.
-- "honda and nexa sales" is tenant_comparison, companies ["Honda","NEXA"], not record_lookup.
+Decision rules:
+- Use record_lookup only when the user asks for table/list/records/details OR asks for a specific field about a person/customer/lead/invoice/vehicle.
+- "what is the phone number of John Kurien" is record_lookup, resource customers, search_text "John Kurien", requested_fields ["mobile_no", "company_name", "email", "status"].
+- "show contact details of John Kurien" is record_lookup, resource customers, search_text "John Kurien", requested_fields ["mobile_no", "email", "company_name", "status"].
+- "which tenant customer is John Kurien" is record_lookup, resource customers, search_text "John Kurien", requested_fields ["company_name", "mobile_no", "email", "status"].
+- "email of Diya Kuiren" is record_lookup, resource customers, search_text "Diya Kuiren", requested_fields ["email", "mobile_no", "company_name"].
+- "invoice for Arjun Pillai" is record_lookup, resource invoices, search_text "Arjun Pillai".
+- "show all sales records" is record_lookup, resource sales.
+- "sales for honda and nexa" is tenant_comparison, companies ["Honda","NEXA"].
+- "sales in last 5 months for honda and nexa" is tenant_comparison, companies ["Honda","NEXA"], month_limit 5.
+- "show nexa sales chart for last 5 months" is sales_analysis, companies ["NEXA"], month_limit 5.
 - "what was the sales in the last 5 months" is sales_analysis, not record_lookup.
-- "nexa sales last 5 months" is sales_analysis, companies ["NEXA"], not record_lookup.
-- "show all sales data" is record_lookup, resource sales.
-- "show the remaining" means continue the previous record table.
-- "invoice for diya kuiren" is record_lookup, resource invoices, search_text "diya kuiren".
-- "show invoice of arjun pillai" is record_lookup, resource invoices, search_text "arjun pillai".
 - "show all charts we have with last 4 months" is dashboard_charts, wants_all_charts true, month_limit 4.
-- If the user asks a chart for one company, include that company only.
+- A single-company metric question should become the relevant analysis intent with that company in companies.
+- A multi-company sales metric question should become tenant_comparison.
+- Do not return out_of_scope for valid DMS data questions.
 
 User query:
 {query}
@@ -1482,6 +1512,7 @@ User query:
             "companies": {"type": "array", "items": {"type": "string"}},
             "month_limit": {"type": "integer", "nullable": True},
             "search_text": {"type": "string", "nullable": True},
+            "requested_fields": {"type": "array", "items": {"type": "string"}},
             "pagination_action": {"type": "string", "nullable": True},
             "wants_all_charts": {"type": "boolean"},
             "confidence": {"type": "number"},
@@ -1499,9 +1530,36 @@ User query:
                 response_schema=schema,
             ),
         )
-        return _safe_json_loads(getattr(response, "text", None))
-    except Exception:
-        return {}
+
+        parsed = _safe_json_loads(getattr(response, "text", None))
+        if not isinstance(parsed, dict):
+            return {
+                "_llm_status": "invalid_response",
+                "_llm_error": "Gemini returned non-dict response",
+            }
+
+        if parsed.get("intent") not in VALID_INTENTS:
+            return {
+                "_llm_status": "invalid_intent",
+                "_llm_error": f"Invalid intent from Gemini: {parsed.get('intent')}",
+                "_raw_route": parsed,
+            }
+
+        if not isinstance(parsed.get("companies"), list):
+            parsed["companies"] = []
+
+        if not isinstance(parsed.get("requested_fields"), list):
+            parsed["requested_fields"] = []
+
+        parsed["_llm_status"] = "ok"
+        parsed["_llm_error"] = None
+        return parsed
+
+    except Exception as exc:
+        return {
+            "_llm_status": "call_failed",
+            "_llm_error": str(exc)[:500],
+        }
 
 
 def _final_company_mentions(query: str) -> list[str]:
@@ -1849,9 +1907,186 @@ def _final_filter_rows(rows: list[dict[str, Any]], fields: list[str], search_tex
     return [row for _, row in scored]
 
 
+def _final_contact_like_query(query: str, route: dict[str, Any] | None = None) -> bool:
+    q = query.lower()
+    if route and route.get("resource") in {"customers", "leads"}:
+        return True
+
+    contact_terms = [
+        "phone", "mobile", "contact number", "number", "email", "mail",
+        "contact details", "details of", "which tenant", "which company",
+        "customer is", "lead is",
+    ]
+    return any(term in q for term in contact_terms)
+
+
+def _final_requested_fields(query: str, route: dict[str, Any] | None, resource: str) -> list[str]:
+    q = query.lower()
+    fields: list[str] = []
+
+    route_fields = route.get("requested_fields") if route else None
+    if isinstance(route_fields, list):
+        for field in route_fields:
+            value = str(field).strip()
+            if value and value not in fields:
+                fields.append(value)
+
+    def add(field: str):
+        if field not in fields:
+            fields.append(field)
+
+    if any(term in q for term in ["phone", "mobile", "contact number", "number", "call"]):
+        add("mobile_no")
+
+    if any(term in q for term in ["email", "mail"]):
+        add("email")
+
+    if any(term in q for term in ["tenant", "company", "dealership", "branch"]):
+        add("company_name")
+
+    if "status" in q:
+        add("status")
+
+    if any(term in q for term in ["vehicle", "model", "car"]):
+        add("model")
+        add("vehicle_interest")
+
+    if any(term in q for term in ["amount", "price", "sales", "revenue", "invoice total", "total"]):
+        add("final_price")
+        add("total_amount")
+
+    if any(term in q for term in ["details", "contact details", "everything", "all details"]):
+        for field in ["mobile_no", "email", "company_name", "status"]:
+            add(field)
+
+    if not fields and resource in {"customers", "leads"}:
+        fields = ["mobile_no", "email", "company_name", "status"]
+
+    return fields
+
+
+def _final_identity_field(resource: str) -> str:
+    return {
+        "customers": "customer_name",
+        "leads": "lead_name",
+        "sales": "customer_name",
+        "bookings": "customer_name",
+        "test_drives": "contact_name",
+        "service_jobs": "customer_name",
+        "invoices": "customer_name",
+        "vehicles": "vehicle_name",
+    }.get(resource, "name")
+
+
+def _final_value(row: dict[str, Any], *fields: str) -> Any:
+    for field in fields:
+        value = row.get(field)
+        if value not in (None, ""):
+            return value
+    return None
+
+
+def _final_record_detail_text(
+    resource: str,
+    rows: list[dict[str, Any]],
+    query: str,
+    route: dict[str, Any] | None,
+    search_text: str | None,
+    display_scope: str,
+    total_after_filter: int,
+) -> str | None:
+    if not search_text and not _final_contact_like_query(query, route):
+        return None
+
+    q = query.lower()
+    wants_specific_answer = any(term in q for term in [
+        "phone", "mobile", "contact number", "number", "email", "mail",
+        "which tenant", "which company", "contact details", "details of",
+        "what is", "what's", "tell me",
+    ])
+
+    if not wants_specific_answer:
+        return None
+
+    if not rows:
+        title = FINAL_RECORD_RESOURCES[resource]["title"].lower()
+        if search_text:
+            return f"No matching {title} found for '{search_text}' in {display_scope}."
+        return f"No matching {title} found in {display_scope}."
+
+    requested = _final_requested_fields(query, route, resource)
+    identity_field = _final_identity_field(resource)
+    title = FINAL_RECORD_RESOURCES[resource]["title"].lower()
+
+    lines = []
+    max_rows = min(len(rows), 5)
+
+    if total_after_filter == 1:
+        row = rows[0]
+        name = _final_value(row, identity_field, "customer_name", "lead_name", "contact_name", "vehicle_name", "name") or "the matching record"
+        tenant = _final_value(row, "company_name") or _company_name_from_id(row.get("company_id")) or "Unknown"
+
+        detail_parts = []
+
+        for field in requested:
+            if field == "company_name":
+                continue
+
+            value = _final_value(row, field)
+            if value in (None, ""):
+                continue
+
+            label = {
+                "mobile_no": "phone number",
+                "email": "email",
+                "status": "status",
+                "model": "model",
+                "vehicle_interest": "vehicle interest",
+                "final_price": "final price",
+                "total_amount": "total amount",
+                "customer_type": "customer type",
+                "source": "source",
+            }.get(field, field.replace("_", " "))
+
+            detail_parts.append(f"{label}: {value}")
+
+        if not detail_parts:
+            for field in ["mobile_no", "email", "status", "model", "vehicle_interest", "final_price", "total_amount"]:
+                value = _final_value(row, field)
+                if value not in (None, ""):
+                    detail_parts.append(f"{field.replace('_', ' ')}: {value}")
+
+        details = "; ".join(detail_parts) if detail_parts else "no extra field values were available"
+        return f"Found 1 matching {title} for '{search_text or name}' in {display_scope}. {name} belongs to tenant/company {tenant}. Details: {details}."
+
+    lines.append(f"Found {total_after_filter} matching {title} record(s) for '{search_text or query}' in {display_scope}. Showing the best {max_rows}:")
+    for index, row in enumerate(rows[:max_rows], start=1):
+        name = _final_value(row, identity_field, "customer_name", "lead_name", "contact_name", "vehicle_name", "name") or "Unnamed"
+        tenant = _final_value(row, "company_name") or _company_name_from_id(row.get("company_id")) or "Unknown"
+
+        parts = [f"tenant/company: {tenant}"]
+
+        for field in requested:
+            if field == "company_name":
+                continue
+            value = _final_value(row, field)
+            if value not in (None, ""):
+                parts.append(f"{field.replace('_', ' ')}: {value}")
+
+        lines.append(f"{index}. {name} — " + "; ".join(parts))
+
+    return "\n".join(lines)
+
+
 def _record_table_response(query: str, route: dict[str, Any] | None = None) -> dict[str, Any]:
     route = route or {}
     resource = _final_detect_record_resource(query, route)
+
+    if not resource and route.get("resource") in FINAL_RECORD_RESOURCES:
+        resource = str(route.get("resource"))
+
+    if not resource and route.get("intent") == "record_lookup" and _final_contact_like_query(query, route):
+        resource = "customers"
 
     if not resource:
         return _build_out_of_scope_response()
@@ -1890,7 +2125,19 @@ def _record_table_response(query: str, route: dict[str, Any] | None = None) -> d
 
     shown_to = min(offset + len(enriched_rows), total_after_filter)
 
-    if search_text and total_after_filter == 0:
+    detail_text = _final_record_detail_text(
+        resource=resource,
+        rows=enriched_rows,
+        query=query,
+        route=route,
+        search_text=search_text,
+        display_scope=display_scope,
+        total_after_filter=total_after_filter,
+    )
+
+    if detail_text:
+        message = detail_text
+    elif search_text and total_after_filter == 0:
         message = f"No matching {config['title'].lower()} found for '{search_text}' in {display_scope}."
     elif search_text:
         message = f"Here are the matching {config['title'].lower()} for '{search_text}' in {display_scope}. Showing {shown_to} of {total_after_filter} matched database record(s)."
@@ -1898,6 +2145,10 @@ def _record_table_response(query: str, route: dict[str, Any] | None = None) -> d
         message = f"Here are the remaining {config['title'].lower()} for {display_scope}. Showing {shown_to} of {total_after_filter} database record(s)."
     else:
         message = f"Here are the latest {config['title'].lower()} for {display_scope}. Showing {shown_to} of {total_after_filter} database record(s)."
+
+    columns = list(config["columns"])
+    if _is_admin() and not any(column.get("key") == "company_name" for column in columns):
+        columns = [{"key": "company_name", "label": "Tenant"}] + columns
 
     company_id, company_name = _resolve_company_scope(query, route)
     return _base_response(
@@ -1913,16 +2164,23 @@ def _record_table_response(query: str, route: dict[str, Any] | None = None) -> d
                 "title": config["title"],
                 "resource": resource,
                 "doctype": doctype,
-                "columns": config["columns"],
+                "columns": columns,
                 "rows": enriched_rows,
                 "total": total_after_filter,
                 "shown": shown_to,
                 "offset": offset,
                 "search_text": search_text,
+                "requested_fields": _final_requested_fields(query, route, resource),
                 "data_source": "database",
             }
         },
-        other={"data_source": "database", "doctype": doctype, "search_text": search_text, "offset": offset},
+        other={
+            "data_source": "database",
+            "doctype": doctype,
+            "search_text": search_text,
+            "offset": offset,
+            "requested_fields": _final_requested_fields(query, route, resource),
+        },
     )
 
 
@@ -2160,60 +2418,109 @@ def query(query: str | None = None):
     conversation_context = payload.get("conversation_context") or payload.get("history") or ""
     routing_query = _routing_query(user_query, conversation_context)
 
+    # Mandatory LLM planner.
+    # Gemini must decide intent/resource/company/time/search/widgets/fields.
+    # There is intentionally no rule-based fallback for normal chat behavior.
     route = _final_llm_route(routing_query)
     route["_conversation_context"] = conversation_context
-    metric_summary_intent = _final_metric_summary_intent(routing_query, route)
-    intelligent_intent = _final_intelligent_intent(routing_query, route)
 
-    # Security always wins. Gemini is never allowed to authorize data.
+    llm_status = route.get("_llm_status")
+    llm_error = route.get("_llm_error")
+    llm_intent = str(route.get("intent") or "").strip()
+
+    if llm_status != "ok" or llm_intent not in VALID_INTENTS:
+        data = _base_response(
+            intent="backend_llm_error",
+            metric=None,
+            time_range=None,
+            company_id=None,
+            company_name=None,
+            widgets_to_show=[],
+            text_response=(
+                "Error encountered due to backend LLM not working. "
+                "The chat agent requires Gemini to detect intent, choose widgets, and plan scoped data access."
+            ),
+            widget_payloads={},
+            other={
+                "data_source": "none",
+                "llm_required": True,
+                "llm_enabled": bool(ENABLE_GEMINI_INTENT),
+                "llm_status": llm_status or "no_route",
+                "llm_error": llm_error,
+                "routing_query": routing_query,
+            },
+        )
+        return success(data=data)
+
+    # Tenant isolation is deterministic and always runs before data access.
+    # Admin can access all allowed tenants. Tenant users are restricted to their own company.
     if _should_deny_cross_tenant_request(routing_query):
         data = _build_cross_tenant_denial_response(routing_query)
 
-    # Intelligent metric routing runs before record lookup because "sales" can
-    # mean either a KPI/chart or the DMS Vehicle Sale table.
-    elif intelligent_intent == "tenant_comparison" or _final_is_comparison_query(routing_query, route):
+    elif llm_intent == "tenant_comparison":
         data = _build_tenant_comparison_response(routing_query, route)
 
-    # Explicit chart/widget requests use chart builder unless the query is
-    # clearly a single metric/tenant analysis handled below.
-    elif _final_is_chart_query(routing_query, route) and intelligent_intent is None:
+    elif llm_intent == "dashboard_charts":
         data = _build_all_charts_response(routing_query, route)
 
-    elif intelligent_intent == "sales_analysis":
+    elif llm_intent == "sales_analysis":
         data = _build_sales_response(routing_query, route)
 
-    elif intelligent_intent == "service_analysis":
+    elif llm_intent == "service_analysis":
         data = _build_service_response(routing_query, route)
 
-    elif intelligent_intent == "inventory_analysis":
+    elif llm_intent == "inventory_analysis":
         data = _build_inventory_response(routing_query, route)
 
-    # Record/table lookup, including fuzzy search and "show remaining".
-    elif _final_detect_record_resource(routing_query, route):
+    elif llm_intent == "record_lookup":
         data = _record_table_response(routing_query, route)
 
-    elif _is_knowledge_lookup_query(routing_query) and route.get("intent") not in {"record_lookup", "dashboard_charts"}:
+    elif llm_intent == "knowledge_lookup":
         data = build_knowledge_response(routing_query)
 
-    else:
-        intent = route.get("intent") if route.get("intent") in VALID_INTENTS else _detect_intent(routing_query)
+    elif llm_intent == "out_of_scope":
+        data = _final_out_of_scope_response()
 
-        if intent == "sales_analysis":
-            data = _build_sales_response(routing_query, route)
-        elif intent == "service_analysis":
-            data = _build_service_response(routing_query, route)
-        elif intent == "inventory_analysis":
-            data = _build_inventory_response(routing_query, route)
-        elif intent == "tenant_comparison":
-            data = _build_tenant_comparison_response(routing_query, route)
-        elif intent == "dashboard_charts":
-            data = _build_all_charts_response(routing_query, route)
-        elif intent == "record_lookup":
-            data = _record_table_response(routing_query, route)
-        elif intent == "out_of_scope":
-            data = _final_out_of_scope_response()
-        else:
-            data = _final_out_of_scope_response()
+    else:
+        # This should be unreachable because invalid/missing LLM intent is handled above.
+        data = _base_response(
+            intent="backend_llm_error",
+            metric=None,
+            time_range=None,
+            company_id=None,
+            company_name=None,
+            widgets_to_show=[],
+            text_response=(
+                "Error encountered due to backend LLM not working. "
+                "The LLM returned an unsupported routing state."
+            ),
+            widget_payloads={},
+            other={
+                "data_source": "none",
+                "llm_required": True,
+                "llm_enabled": bool(ENABLE_GEMINI_INTENT),
+                "llm_status": llm_status or "invalid_state",
+                "llm_error": llm_error,
+                "llm_intent": llm_intent,
+                "routing_query": routing_query,
+            },
+        )
+
+    # Safe diagnostics for demo/debugging. No secrets.
+    try:
+        data.setdefault("filters_applied", {}).setdefault("other", {})
+        data["filters_applied"]["other"]["llm_required"] = True
+        data["filters_applied"]["other"]["llm_intent"] = llm_intent
+        data["filters_applied"]["other"]["llm_resource"] = route.get("resource")
+        data["filters_applied"]["other"]["llm_companies"] = route.get("companies")
+        data["filters_applied"]["other"]["llm_requested_fields"] = route.get("requested_fields")
+        data["filters_applied"]["other"]["llm_confidence"] = route.get("confidence")
+        data["filters_applied"]["other"]["llm_enabled"] = bool(ENABLE_GEMINI_INTENT)
+        data["filters_applied"]["other"]["llm_status"] = llm_status
+        data["filters_applied"]["other"]["llm_error"] = llm_error
+        data["filters_applied"]["other"]["routing_query"] = routing_query
+    except Exception:
+        pass
 
     return success(data=data)
 

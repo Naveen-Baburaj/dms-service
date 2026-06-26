@@ -66,7 +66,12 @@ export function Navbar() {
         </div>
       </div>
 
-      <div className="ml-auto flex items-center gap-2">
+      <div className="ml-auto flex items-center gap-3">
+        <div className="hidden lg:flex flex-col items-end border-r border-border pr-3">
+          <span className="text-sm font-semibold leading-none text-foreground">Genbyte.ai</span>
+          <span className="mt-1 text-[10px] font-medium uppercase tracking-wider text-violet-500">AI Demo</span>
+        </div>
+
         {/* Notifications */}
         <button className="relative flex h-9 w-9 items-center justify-center rounded-lg hover:bg-muted transition-colors">
           <Bell className="h-4 w-4" />

@@ -32,10 +32,10 @@ interface Message {
 
 
 const SUGGESTED_PROMPTS = [
-  { icon: TrendingUp, label: "What was the sales in the last 5 months?", color: 'text-emerald-500' },
-  { icon: Users, label: "Show me service records for the last 3 months", color: 'text-blue-500' },
+  { icon: TrendingUp, label: "Sales in last 5 months for Honda and NEXA", color: 'text-emerald-500' },
+  { icon: Users, label: "What is the phone number of John Kurien?", color: 'text-blue-500' },
   { icon: Car, label: "What is the current inventory stock?", color: 'text-orange-500' },
-  { icon: MessageSquare, label: "Compare sales across all tenants", color: 'text-purple-500' },
+  { icon: MessageSquare, label: "Show all charts for the last 4 months", color: 'text-purple-500' },
 ];
 
 
@@ -83,6 +83,25 @@ function resolveRole(user: User | null): string {
 
 function resolveCompany(user: User | null): string {
   return user?.company ?? '';
+}
+
+function resolveAccessScope(user: User | null): string {
+  if (user?.role === 'group_admin' || user?.company === 'Group') return 'All Companies';
+  if (user?.company) return `${user.company} only`;
+  return 'Current tenant';
+}
+
+function displayAssistantText(data: AgentResponse): string {
+  if (data.intent === 'backend_llm_error') {
+    return 'Sorry, the backend LLM is not working right now. Please try again shortly.';
+  }
+  return data.text_response;
+}
+
+function formatIntentBadge(intent?: string): string {
+  if (!intent) return '';
+  if (intent === 'backend_llm_error') return 'AI SERVICE ERROR';
+  return intent.replace(/_/g, ' ');
 }
 
 // ─── Widget payloads ──────────────────────────────────────────────────────────
@@ -1030,6 +1049,87 @@ function RpaAgentPanel({ user }: { user: User | null }) {
 }
 
 
+function AiAmbientBackground() {
+  return (
+    <div className="pointer-events-none absolute inset-0 z-0 overflow-hidden" aria-hidden="true">
+      <div className="gb-ai-grid absolute inset-0 opacity-[0.22]" />
+      <div className="gb-ai-orb gb-ai-orb-one absolute h-72 w-72 rounded-full bg-violet-500/15 blur-3xl" />
+      <div className="gb-ai-orb gb-ai-orb-two absolute h-80 w-80 rounded-full bg-indigo-500/10 blur-3xl" />
+      <div className="gb-ai-orb gb-ai-orb-three absolute h-56 w-56 rounded-full bg-cyan-500/10 blur-3xl" />
+      <div className="gb-ai-scan absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-violet-500/35 to-transparent" />
+
+      <style>{`
+        .gb-ai-grid {
+          background-image:
+            linear-gradient(to right, rgba(124, 58, 237, 0.10) 1px, transparent 1px),
+            linear-gradient(to bottom, rgba(79, 70, 229, 0.08) 1px, transparent 1px);
+          background-size: 48px 48px;
+          mask-image: radial-gradient(circle at 50% 35%, black 0%, transparent 74%);
+          animation: gb-grid-drift 22s linear infinite;
+        }
+
+        .gb-ai-orb-one {
+          left: 10%;
+          top: 12%;
+          animation: gb-orb-float-one 18s ease-in-out infinite;
+        }
+
+        .gb-ai-orb-two {
+          right: 8%;
+          bottom: 18%;
+          animation: gb-orb-float-two 21s ease-in-out infinite;
+        }
+
+        .gb-ai-orb-three {
+          right: 32%;
+          top: 34%;
+          animation: gb-orb-float-three 24s ease-in-out infinite;
+        }
+
+        .gb-ai-scan {
+          animation: gb-scan 8s ease-in-out infinite;
+        }
+
+        @keyframes gb-grid-drift {
+          from { transform: translate3d(0, 0, 0); }
+          to { transform: translate3d(48px, 48px, 0); }
+        }
+
+        @keyframes gb-orb-float-one {
+          0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+          50% { transform: translate3d(28px, 18px, 0) scale(1.08); }
+        }
+
+        @keyframes gb-orb-float-two {
+          0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+          50% { transform: translate3d(-24px, -20px, 0) scale(1.06); }
+        }
+
+        @keyframes gb-orb-float-three {
+          0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+          50% { transform: translate3d(12px, -22px, 0) scale(1.04); }
+        }
+
+        @keyframes gb-scan {
+          0%, 100% { transform: translateY(0); opacity: 0; }
+          20% { opacity: 0.35; }
+          50% { transform: translateY(70vh); opacity: 0.18; }
+          80% { opacity: 0; }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+          .gb-ai-grid,
+          .gb-ai-orb,
+          .gb-ai-scan {
+            animation: none;
+          }
+        }
+      `}</style>
+    </div>
+  );
+}
+
+
 // ─── Main page ────────────────────────────────────────────────────────────────
 export default function ChatPage() {
   const { user } = useAuthStore();
@@ -1089,7 +1189,7 @@ export default function ChatPage() {
         {
           id: (Date.now() + 1).toString(),
           role: 'assistant',
-          content: data.text_response,
+          content: displayAssistantText(data),
           timestamp: new Date(),
           agentData: data,
         },
@@ -1101,7 +1201,7 @@ export default function ChatPage() {
         {
           id: (Date.now() + 1).toString(),
           role: 'assistant',
-          content: 'Unable to reach the DMS backend AI agent. Please make sure the DMS backend is running and the AI endpoint is available.',
+          content: 'Unable to reach the backend AI service. Please make sure the backend is running and try again.',
           timestamp: new Date(),
           error: true,
         },
@@ -1119,6 +1219,7 @@ export default function ChatPage() {
 
   const initials = user?.full_name?.split(' ').map((n) => n[0]).join('').slice(0, 2) ?? 'U';
   const isRpaAdmin = user?.role === 'group_admin' || user?.company === 'Group';
+  const accessScope = resolveAccessScope(user);
 
   return (
     <div className="flex h-full -m-6 overflow-hidden">
@@ -1129,7 +1230,7 @@ export default function ChatPage() {
           <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-to-br from-violet-500 to-indigo-600">
             <Sparkles className="h-4 w-4 text-white" />
           </div>
-          <span className="text-sm font-semibold">DMS AI</span>
+          <span className="text-sm font-semibold">Genbyte AI</span>
         </div>
 
         <div className="px-3 pb-3">
@@ -1162,9 +1263,8 @@ export default function ChatPage() {
             >
               <span className="flex items-center gap-2">
                 <Bot className="h-4 w-4" />
-                Main Chat Agent
+                Chat Agent
               </span>
-              <span className="text-[10px] text-white/40">DMS</span>
             </button>
 
             <button
@@ -1217,7 +1317,8 @@ export default function ChatPage() {
       </div>
 
       {/* ── Right: Chat Area ─────────────────────────────────────────────────── */}
-      <div className="relative flex flex-1 flex-col bg-background overflow-hidden">
+      <div className="relative flex flex-1 flex-col overflow-hidden bg-background">
+        {activeModule === 'chat' && <AiAmbientBackground />}
         {activeModule === 'voice' && (
           <div className="absolute inset-0 z-20 flex items-center justify-center bg-background">
             <div className="max-w-sm rounded-2xl border border-border bg-card p-6 text-center shadow-sm">
@@ -1226,7 +1327,7 @@ export default function ChatPage() {
               </div>
               <h2 className="text-base font-semibold text-foreground">Voice Agent</h2>
               <p className="mt-2 text-sm text-muted-foreground">
-                Voice automation is not enabled yet. Use Main Chat Agent or RPA Agent for now.
+                Voice automation is not enabled yet. Use Chat Agent or RPA Agent for now.
               </p>
             </div>
           </div>
@@ -1252,15 +1353,38 @@ export default function ChatPage() {
           </div>
         )}
 
+        {activeModule === 'chat' && (
+          <div className="relative z-10 border-b border-border/60 bg-background/75 px-6 py-3 backdrop-blur-xl">
+            <div className="mx-auto flex max-w-4xl flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <div className="flex items-center gap-2">
+                  <h1 className="text-sm font-semibold text-foreground">Chat Agent</h1>
+                  <span className="rounded-full border border-violet-500/25 bg-violet-500/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-violet-600">
+                    AI Demo Mode
+                  </span>
+                </div>
+                <p className="mt-0.5 text-xs text-muted-foreground">
+                  Scoped DMS data assistant for customers, sales, inventory, invoices, and tenant performance.
+                </p>
+              </div>
+              <div className="inline-flex w-fit items-center gap-2 rounded-full border border-border bg-card/80 px-3 py-1.5 text-[11px] text-muted-foreground">
+                <ShieldCheck className="h-3.5 w-3.5 text-violet-500" />
+                <span>Access Scope:</span>
+                <span className="font-semibold text-foreground">{accessScope}</span>
+              </div>
+            </div>
+          </div>
+        )}
+
         {messages.length === 0 && !isTyping ? (
           /* Welcome / Empty state */
-          <div className="flex flex-1 flex-col items-center justify-center p-8 overflow-y-auto">
+          <div className="relative z-10 flex flex-1 flex-col items-center justify-center overflow-y-auto p-8">
             <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-violet-500 to-indigo-600 shadow-lg shadow-violet-500/25 mb-5">
               <Sparkles className="h-8 w-8 text-white" />
             </div>
-            <h2 className="text-2xl font-bold text-foreground mb-1">DMS AI Assistant</h2>
+            <h2 className="text-2xl font-bold text-foreground mb-1">Genbyte AI Demo</h2>
             <p className="text-sm text-muted-foreground mb-8 text-center max-w-sm">
-              Ask about sales, service records, inventory, or compare performance across tenants.
+              Ask about customers, sales, inventory, invoices, or tenant performance using scoped DMS data.
             </p>
 
             <div className="grid grid-cols-2 gap-3 w-full max-w-xl">
@@ -1281,12 +1405,12 @@ export default function ChatPage() {
             <div className="mt-8 flex items-center gap-6 text-xs text-muted-foreground">
               <span className="flex items-center gap-1.5"><Clock className="h-3.5 w-3.5" /> Real-time data</span>
               <span className="flex items-center gap-1.5"><Star className="h-3.5 w-3.5" /> Context-aware</span>
-              <span className="flex items-center gap-1.5"><Bot className="h-3.5 w-3.5" /> DMS-trained</span>
+              <span className="flex items-center gap-1.5"><Bot className="h-3.5 w-3.5" /> Scoped data</span>
             </div>
           </div>
         ) : (
           /* Message thread */
-          <ScrollArea className="flex-1 px-4 py-6">
+          <ScrollArea className="relative z-10 flex-1 px-4 py-6">
             <div className="mx-auto max-w-2xl space-y-6">
               {messages.map((msg) => (
                 <ChatMessage key={msg.id} message={msg} userInitials={initials} />
@@ -1308,7 +1432,7 @@ export default function ChatPage() {
         )}
 
         {/* Input area */}
-        <div className="border-t border-border bg-background/80 backdrop-blur-sm px-4 py-4">
+        <div className="relative z-10 border-t border-border bg-background/80 px-4 py-4 backdrop-blur-sm">
           <div className="mx-auto max-w-2xl">
             <div className="relative flex items-end gap-2 rounded-2xl border border-border bg-card shadow-sm focus-within:border-primary/50 focus-within:shadow-md transition-all">
               <button className="absolute left-3 bottom-3 text-muted-foreground hover:text-foreground transition-colors">
@@ -1321,7 +1445,7 @@ export default function ChatPage() {
                 value={input}
                 onChange={(e) => { setInput(e.target.value); autoResize(); }}
                 onKeyDown={handleKeyDown}
-                placeholder="Ask about sales, inventory, service records..."
+                placeholder="Ask about customers, sales, inventory, invoices, or tenant performance..."
                 className="flex-1 resize-none bg-transparent pl-10 pr-24 py-3.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none max-h-40 min-h-[52px]"
               />
 
@@ -1345,7 +1469,7 @@ export default function ChatPage() {
             </div>
 
             <p className="mt-2 text-center text-[11px] text-muted-foreground">
-              DMS AI can make mistakes. Verify important information before acting on it.
+              Demo assistant. Verify important business data before acting.
             </p>
           </div>
         </div>
@@ -1398,11 +1522,11 @@ function ChatMessage({ message, userInitials }: { message: Message; userInitials
       </div>
       <div className="flex flex-col gap-1 min-w-0 flex-1">
         <div className="flex items-center gap-2 mb-0.5">
-          <span className="text-xs font-semibold text-foreground">DMS AI</span>
+          <span className="text-xs font-semibold text-foreground">Genbyte AI</span>
           <span className="text-[10px] text-muted-foreground">{formatTime(message.timestamp)}</span>
           {message.agentData?.intent && !message.error && (
             <span className="rounded-full bg-muted px-1.5 py-0.5 text-[9px] font-medium text-muted-foreground uppercase tracking-wide">
-              {message.agentData.intent.replace(/_/g, ' ')}
+              {formatIntentBadge(message.agentData.intent)}
             </span>
           )}
         </div>

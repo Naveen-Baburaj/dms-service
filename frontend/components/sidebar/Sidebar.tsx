@@ -77,9 +77,14 @@ export function Sidebar() {
           {user?.company?.[0] ?? 'D'}
         </div>
         {!collapsed && (
-          <div className="flex flex-col min-w-0">
-            <span className="text-sm font-semibold truncate">{user?.company ?? 'DMS'}</span>
-            <span className="text-xs text-muted-foreground truncate">Dealer Management</span>
+          <div className="flex min-w-0 flex-col">
+            <div className="flex min-w-0 items-center gap-2">
+              <span className="truncate text-sm font-semibold">{user?.company ?? 'DMS'}</span>
+              <span className="rounded-full border border-violet-500/25 bg-violet-500/10 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-violet-600">
+                Demo
+              </span>
+            </div>
+            <span className="truncate text-xs text-muted-foreground">DMS Demo</span>
           </div>
         )}
       </div>
