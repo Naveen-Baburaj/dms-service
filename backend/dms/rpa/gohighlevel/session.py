@@ -158,7 +158,8 @@ def connect_session(
     sync_playwright = _require_playwright()
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=playwright_headless(), slow_mo=playwright_slow_mo_ms())
+        # Login must stay visible for the admin/security-code flow. The actual save/sync worker still uses GHL_RPA_HEADLESS.
+        browser = p.chromium.launch(headless=False, slow_mo=playwright_slow_mo_ms())
         context = browser.new_context()
         page = context.new_page()
         page.goto(ghl_login_url(), wait_until="domcontentloaded", timeout=operation_timeout_ms())

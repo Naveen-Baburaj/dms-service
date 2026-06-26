@@ -32,7 +32,7 @@ export default function LoginPage() {
   const errorMessage =
     loginError instanceof Error
       ? loginError.message
-      : (loginError as { response?: { data?: { message?: string } } })?.response?.data?.message ??
+      : (loginError as unknown as { response?: { data?: { message?: string } } })?.response?.data?.message ??
         'Invalid credentials. Please try again.';
 
   return (

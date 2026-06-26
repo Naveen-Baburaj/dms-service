@@ -160,25 +160,31 @@ apiClient.interceptors.response.use(
   },
 );
 
-export function unwrapFrappe<T>(raw: unknown): T {
-  const value = raw as {
-    message?: {
-      success?: boolean;
-      data?: T;
-      message?: string;
-    };
+type FrappeEnvelope<T> = {
+  message?: {
     success?: boolean;
     data?: T;
     message?: string;
-  };
+  } | string;
+  success?: boolean;
+  data?: T;
+};
 
-  if (value.message?.success === false) {
-    throw new Error(value.message.message || 'Request failed');
+export function unwrapFrappe<T>(raw: unknown): T {
+  const value = raw as FrappeEnvelope<T>;
+  const nestedMessage =
+    typeof value.message === 'object' && value.message !== null
+      ? value.message
+      : undefined;
+  const rootMessage = typeof value.message === 'string' ? value.message : undefined;
+
+  if (nestedMessage?.success === false) {
+    throw new Error(nestedMessage.message || 'Request failed');
   }
 
   if (value.success === false) {
-    throw new Error(value.message || 'Request failed');
+    throw new Error(rootMessage || 'Request failed');
   }
 
-  return (value.message?.data ?? value.data ?? raw) as T;
+  return (nestedMessage?.data ?? value.data ?? raw) as T;
 }

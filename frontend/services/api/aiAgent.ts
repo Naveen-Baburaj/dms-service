@@ -57,27 +57,33 @@ export function resolveAgentHeaders(role: string, company: string): Record<strin
   return headers;
 }
 
-function unwrapFrappeResponse(raw: unknown): AgentResponse {
-  const value = raw as {
-    message?: {
-      success?: boolean;
-      data?: AgentResponse;
-      message?: string;
-    };
+type FrappeAgentEnvelope = {
+  message?: {
     success?: boolean;
     data?: AgentResponse;
     message?: string;
-  };
+  } | string;
+  success?: boolean;
+  data?: AgentResponse;
+};
 
-  if (value.message?.success === false) {
-    throw new Error(value.message.message || 'AI agent request failed');
+function unwrapFrappeResponse(raw: unknown): AgentResponse {
+  const value = raw as FrappeAgentEnvelope;
+  const nestedMessage =
+    typeof value.message === 'object' && value.message !== null
+      ? value.message
+      : undefined;
+  const rootMessage = typeof value.message === 'string' ? value.message : undefined;
+
+  if (nestedMessage?.success === false) {
+    throw new Error(nestedMessage.message || 'AI agent request failed');
   }
 
   if (value.success === false) {
-    throw new Error(value.message || 'AI agent request failed');
+    throw new Error(rootMessage || 'AI agent request failed');
   }
 
-  const data = value.message?.data ?? value.data ?? raw;
+  const data = nestedMessage?.data ?? value.data ?? raw;
 
   return data as AgentResponse;
 }
