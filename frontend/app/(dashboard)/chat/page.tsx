@@ -1,8 +1,8 @@
 'use client';
 import { useState, useRef, useEffect } from 'react';
 import {
-  Send, Plus, Search, Bot, Sparkles, Car, TrendingUp,
-  Users, ChevronDown, MoreHorizontal, Edit3,
+  Send, Plus, Bot, Sparkles, Car, TrendingUp,
+  Users,
   Paperclip, Mic, RotateCcw, ThumbsUp, ThumbsDown, Copy,
   MessageSquare, Clock, Star, AlertCircle,
   PhoneCall, Workflow, Database, Cloud, CheckCircle2, Loader2, ShieldCheck,
@@ -16,6 +16,7 @@ import { useAuthStore } from '@/store/authStore';
 import type { User } from '@/types';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { RpaSavedContactsTable } from '@/components/rpa/RpaSavedContactsTable';
 import { queryDashboardAgent, type AgentResponse, type FiltersApplied } from '@/services/api/aiAgent';
 import { checkGhlSession, openGhlLogin, saveRpaContact, type RpaContactPayload, type RpaSaveResult, type RpaSaveTarget } from '@/services/api/rpaGhl';
 
@@ -29,24 +30,6 @@ interface Message {
   error?: boolean;
 }
 
-interface Conversation {
-  id: string;
-  title: string;
-  lastMessage: string;
-  timestamp: Date;
-  isPinned?: boolean;
-}
-
-// ─── Mock history ─────────────────────────────────────────────────────────────
-const MOCK_HISTORY: Conversation[] = [
-  { id: 'c1', title: 'Honda Civic lead follow-up', lastMessage: 'I can help you draft...', timestamp: new Date(Date.now() - 1000 * 60 * 20), isPinned: true },
-  { id: 'c2', title: 'Monthly sales report summary', lastMessage: 'Here is the breakdown...', timestamp: new Date(Date.now() - 1000 * 60 * 60 * 2) },
-  { id: 'c3', title: 'Test drive scheduling tips', lastMessage: 'Best practices include...', timestamp: new Date(Date.now() - 1000 * 60 * 60 * 5) },
-  { id: 'c4', title: 'Customer objection handling', lastMessage: 'When a customer says...', timestamp: new Date(Date.now() - 1000 * 60 * 60 * 24) },
-  { id: 'c5', title: 'NEXA vs Honda comparison', lastMessage: 'The key differences...', timestamp: new Date(Date.now() - 1000 * 60 * 60 * 25) },
-  { id: 'c6', title: 'EMI calculation for City S', lastMessage: 'For a ₹12L vehicle...', timestamp: new Date(Date.now() - 1000 * 60 * 60 * 48) },
-  { id: 'c7', title: 'Follow-up email template', lastMessage: 'Subject: Your test drive...', timestamp: new Date(Date.now() - 1000 * 60 * 60 * 72) },
-];
 
 const SUGGESTED_PROMPTS = [
   { icon: TrendingUp, label: "What was the sales in the last 5 months?", color: 'text-emerald-500' },
@@ -56,7 +39,7 @@ const SUGGESTED_PROMPTS = [
 ];
 
 
-type WorkspaceModule = 'chat' | 'rpa';
+type WorkspaceModule = 'chat' | 'voice' | 'rpa';
 
 type RpaPhase = 'idle' | 'validating' | 'session' | 'login' | 'saving' | 'syncing' | 'success' | 'error';
 
@@ -93,13 +76,6 @@ function formatTime(date: Date): string {
   return date.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true });
 }
 
-function formatGroupLabel(date: Date): string {
-  const now = new Date();
-  const diff = now.getTime() - date.getTime();
-  if (diff < 1000 * 60 * 60 * 24) return 'Today';
-  if (diff < 1000 * 60 * 60 * 48) return 'Yesterday';
-  return 'Previous 7 days';
-}
 
 function resolveRole(user: User | null): string {
   return user?.role ?? '';
@@ -658,6 +634,7 @@ function RpaAgentPanel({ user }: { user: User | null }) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [result, setResult] = useState<RpaSaveResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [contactsRefreshKey, setContactsRefreshKey] = useState(0);
 
   const role = resolveRole(user);
   const company = resolveCompany(user);
@@ -744,6 +721,7 @@ function RpaAgentPanel({ user }: { user: User | null }) {
       }
 
       setResult(saved);
+      setContactsRefreshKey((key) => key + 1);
       setStage(
         'success',
         100,
@@ -1041,6 +1019,10 @@ function RpaAgentPanel({ user }: { user: User | null }) {
               </ul>
             </div>
           </div>
+
+          <div className="lg:col-span-2">
+            <RpaSavedContactsTable role={role} company={company} refreshSignal={contactsRefreshKey} />
+          </div>
         </div>
       </ScrollArea>
     </div>
@@ -1051,13 +1033,9 @@ function RpaAgentPanel({ user }: { user: User | null }) {
 // ─── Main page ────────────────────────────────────────────────────────────────
 export default function ChatPage() {
   const { user } = useAuthStore();
-  const [conversations, setConversations] = useState<Conversation[]>(MOCK_HISTORY);
-  const [activeId, setActiveId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [isTyping, setIsTyping] = useState(false);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [activeModule, setActiveModule] = useState<WorkspaceModule>('chat');
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -1075,7 +1053,6 @@ export default function ChatPage() {
 
   function startNewChat() {
     setActiveModule('chat');
-    setActiveId(null);
     setMessages([]);
     setInput('');
   }
@@ -1092,19 +1069,6 @@ export default function ChatPage() {
     setInput('');
     if (textareaRef.current) textareaRef.current.style.height = 'auto';
 
-    if (!activeId) {
-      const newId = `c-${Date.now()}`;
-      setConversations((prev) => [
-        {
-          id: newId,
-          title: text.trim().slice(0, 40) + (text.length > 40 ? '...' : ''),
-          lastMessage: '',
-          timestamp: new Date(),
-        },
-        ...prev,
-      ]);
-      setActiveId(newId);
-    }
 
     setIsTyping(true);
     try {
@@ -1152,16 +1116,6 @@ export default function ChatPage() {
     }
   }
 
-  const filteredConversations = conversations.filter(
-    (c) => !searchQuery || c.title.toLowerCase().includes(searchQuery.toLowerCase()),
-  );
-  const pinned = filteredConversations.filter((c) => c.isPinned);
-  const unpinned = filteredConversations.filter((c) => !c.isPinned);
-  const groups = [
-    { label: 'Today', items: unpinned.filter((c) => formatGroupLabel(c.timestamp) === 'Today') },
-    { label: 'Yesterday', items: unpinned.filter((c) => formatGroupLabel(c.timestamp) === 'Yesterday') },
-    { label: 'Previous 7 days', items: unpinned.filter((c) => formatGroupLabel(c.timestamp) === 'Previous 7 days') },
-  ].filter((g) => g.items.length > 0);
 
   const initials = user?.full_name?.split(' ').map((n) => n[0]).join('').slice(0, 2) ?? 'U';
   const isRpaAdmin = user?.role === 'group_admin' || user?.company === 'Group';
@@ -1169,26 +1123,15 @@ export default function ChatPage() {
   return (
     <div className="flex h-full -m-6 overflow-hidden">
 
-      {/* ── Left: Chat History Sidebar ──────────────────────────────────────── */}
+      {/* ── Left: Agent Module Sidebar ───────────────────────────────────────── */}
       <div className="flex w-64 shrink-0 flex-col bg-[#0f0f0f] text-white">
-        {/* Header */}
-        <div className="flex items-center justify-between px-3 pt-4 pb-2">
-          <div className="flex items-center gap-2">
-            <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-to-br from-violet-500 to-indigo-600">
-              <Sparkles className="h-4 w-4 text-white" />
-            </div>
-            <span className="text-sm font-semibold">DMS AI</span>
+        <div className="flex items-center gap-2 px-3 pt-4 pb-3">
+          <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-to-br from-violet-500 to-indigo-600">
+            <Sparkles className="h-4 w-4 text-white" />
           </div>
-          <button
-            onClick={startNewChat}
-            className="flex h-7 w-7 items-center justify-center rounded-lg hover:bg-white/10 transition-colors"
-            title="New Chat"
-          >
-            <Edit3 className="h-4 w-4 text-white/70" />
-          </button>
+          <span className="text-sm font-semibold">DMS AI</span>
         </div>
 
-        {/* New Chat button */}
         <div className="px-3 pb-3">
           <button
             onClick={startNewChat}
@@ -1198,121 +1141,111 @@ export default function ChatPage() {
             New Chat
           </button>
         </div>
-        {isRpaAdmin && (
-          <div className="px-3 pb-3">
-            <div className="mb-2 px-1 text-[10px] font-semibold uppercase tracking-wider text-white/30">
-              Modules
-            </div>
-            <div className="grid gap-2">
-              <button
-                type="button"
-                disabled
-                title="Voice Agent module will be connected later"
-                className="flex w-full items-center justify-between rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2.5 text-left text-sm text-white/40 opacity-70"
-              >
-                <span className="flex items-center gap-2">
-                  <PhoneCall className="h-4 w-4" />
-                  Voice Agent
-                </span>
-                <span className="text-[10px]">Soon</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setActiveModule('rpa')}
-                className={cn(
-                  'flex w-full items-center justify-between rounded-xl border px-3 py-2.5 text-left text-sm transition-colors',
-                  activeModule === 'rpa'
-                    ? 'border-violet-400/60 bg-violet-500/20 text-white'
-                    : 'border-white/10 bg-white/5 text-white/80 hover:bg-white/10',
-                )}
-              >
-                <span className="flex items-center gap-2">
-                  <Workflow className="h-4 w-4" />
-                  RPA Agent
-                </span>
-                <span className="text-[10px] text-white/40">GHL</span>
-              </button>
-            </div>
-          </div>
-        )}
 
-
-        {/* Search */}
         <div className="px-3 pb-3">
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-white/30" />
-            <input
-              type="text"
-              placeholder="Search conversations..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full rounded-lg bg-white/5 pl-8 pr-3 py-2 text-xs text-white/70 placeholder:text-white/30 border border-white/5 focus:outline-none focus:border-white/20 transition-colors"
-            />
+          <div className="mb-2 px-1 text-[10px] font-semibold uppercase tracking-wider text-white/30">
+            Agents
+          </div>
+          <div className="grid gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                setActiveModule('chat');
+                startNewChat();
+              }}
+              className={cn(
+                'flex w-full items-center justify-between rounded-xl border px-3 py-2.5 text-left text-sm transition-colors',
+                activeModule === 'chat'
+                  ? 'border-violet-400/60 bg-violet-500/20 text-white'
+                  : 'border-white/10 bg-white/5 text-white/80 hover:bg-white/10',
+              )}
+            >
+              <span className="flex items-center gap-2">
+                <Bot className="h-4 w-4" />
+                Main Chat Agent
+              </span>
+              <span className="text-[10px] text-white/40">DMS</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setActiveModule('voice')}
+              className={cn(
+                'flex w-full items-center justify-between rounded-xl border px-3 py-2.5 text-left text-sm transition-colors',
+                activeModule === 'voice'
+                  ? 'border-violet-400/60 bg-violet-500/20 text-white'
+                  : 'border-white/10 bg-white/5 text-white/80 hover:bg-white/10',
+              )}
+            >
+              <span className="flex items-center gap-2">
+                <PhoneCall className="h-4 w-4" />
+                Voice Agent
+              </span>
+              <span className="text-[10px] text-white/40">Soon</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setActiveModule('rpa')}
+              className={cn(
+                'flex w-full items-center justify-between rounded-xl border px-3 py-2.5 text-left text-sm transition-colors',
+                activeModule === 'rpa'
+                  ? 'border-violet-400/60 bg-violet-500/20 text-white'
+                  : 'border-white/10 bg-white/5 text-white/80 hover:bg-white/10',
+              )}
+            >
+              <span className="flex items-center gap-2">
+                <Workflow className="h-4 w-4" />
+                RPA Agent
+              </span>
+              <span className="text-[10px] text-white/40">GHL</span>
+            </button>
           </div>
         </div>
 
-        {/* History list */}
-        <ScrollArea className="flex-1 px-2">
-          {pinned.length > 0 && (
-            <div className="mb-2">
-              <div className="flex items-center gap-1.5 px-2 py-1">
-                <Star className="h-3 w-3 text-white/30" />
-                <span className="text-[11px] font-semibold uppercase tracking-wider text-white/30">Pinned</span>
-              </div>
-              {pinned.map((conv) => (
-                <ConvItem
-                  key={conv.id}
-                  conv={conv}
-                  isActive={activeId === conv.id}
-                  isHovered={hoveredId === conv.id}
-                  onSelect={() => { setActiveId(conv.id); setMessages([]); }}
-                  onHover={setHoveredId}
-                />
-              ))}
-              <div className="mx-2 my-2 border-t border-white/[0.06]" />
-            </div>
-          )}
-
-          {groups.map((group) => (
-            <div key={group.label} className="mb-1">
-              <div className="px-2 py-1">
-                <span className="text-[11px] font-semibold uppercase tracking-wider text-white/30">{group.label}</span>
-              </div>
-              {group.items.map((conv) => (
-                <ConvItem
-                  key={conv.id}
-                  conv={conv}
-                  isActive={activeId === conv.id}
-                  isHovered={hoveredId === conv.id}
-                  onSelect={() => { setActiveId(conv.id); setMessages([]); }}
-                  onHover={setHoveredId}
-                />
-              ))}
-            </div>
-          ))}
-
-          {filteredConversations.length === 0 && (
-            <div className="py-8 text-center text-xs text-white/30">No conversations found</div>
-          )}
-        </ScrollArea>
-
-        {/* Footer */}
-        <div className="border-t border-white/[0.06] p-3">
-          <div className="flex items-center gap-2 rounded-lg px-2 py-2 hover:bg-white/5 cursor-pointer transition-colors">
-            <div className="flex h-7 w-7 items-center justify-center rounded-full bg-gradient-to-br from-violet-500 to-indigo-600 text-[11px] font-bold text-white shrink-0">
+        <div className="mt-auto border-t border-white/[0.06] p-3">
+          <div className="flex items-center gap-2 rounded-lg px-2 py-2">
+            <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-violet-500 to-indigo-600 text-[11px] font-bold text-white">
               {initials}
             </div>
             <div className="min-w-0 flex-1">
               <p className="truncate text-xs font-medium text-white/80">{user?.full_name ?? 'User'}</p>
               <p className="truncate text-[10px] text-white/40">{user?.role?.replace(/_/g, ' ')}</p>
             </div>
-            <ChevronDown className="h-3.5 w-3.5 text-white/30 shrink-0" />
           </div>
         </div>
       </div>
 
       {/* ── Right: Chat Area ─────────────────────────────────────────────────── */}
       <div className="relative flex flex-1 flex-col bg-background overflow-hidden">
+        {activeModule === 'voice' && (
+          <div className="absolute inset-0 z-20 flex items-center justify-center bg-background">
+            <div className="max-w-sm rounded-2xl border border-border bg-card p-6 text-center shadow-sm">
+              <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-muted text-muted-foreground">
+                <PhoneCall className="h-5 w-5" />
+              </div>
+              <h2 className="text-base font-semibold text-foreground">Voice Agent</h2>
+              <p className="mt-2 text-sm text-muted-foreground">
+                Voice automation is not enabled yet. Use Main Chat Agent or RPA Agent for now.
+              </p>
+            </div>
+          </div>
+        )}
+
+        {activeModule === 'rpa' && !isRpaAdmin && (
+          <div className="absolute inset-0 z-20 flex items-center justify-center bg-background">
+            <div className="max-w-sm rounded-2xl border border-border bg-card p-6 text-center shadow-sm">
+              <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-red-500/10 text-red-500">
+                <ShieldCheck className="h-5 w-5" />
+              </div>
+              <h2 className="text-base font-semibold text-foreground">RPA Agent is admin-only</h2>
+              <p className="mt-2 text-sm text-muted-foreground">
+                GoHighLevel RPA is available only for the full admin account.
+              </p>
+            </div>
+          </div>
+        )}
+
         {activeModule === 'rpa' && isRpaAdmin && (
           <div className="absolute inset-0 z-20 bg-background">
             <RpaAgentPanel user={user} />
@@ -1422,41 +1355,6 @@ export default function ChatPage() {
 }
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
-function ConvItem({
-  conv, isActive, isHovered, onSelect, onHover,
-}: {
-  conv: Conversation;
-  isActive: boolean;
-  isHovered: boolean;
-  onSelect: () => void;
-  onHover: (id: string | null) => void;
-}) {
-  return (
-    <div
-      className={cn(
-        'group relative flex cursor-pointer items-center gap-2 rounded-lg px-2 py-2 text-left transition-colors',
-        isActive ? 'bg-white/10 text-white' : 'text-white/60 hover:bg-white/5 hover:text-white/80',
-      )}
-      onClick={onSelect}
-      onMouseEnter={() => onHover(conv.id)}
-      onMouseLeave={() => onHover(null)}
-    >
-      <MessageSquare className="h-3.5 w-3.5 shrink-0 opacity-60" />
-      <span className="flex-1 truncate text-xs">{conv.title}</span>
-      {(isActive || isHovered) && (
-        <div className="flex items-center gap-0.5 shrink-0">
-          <button
-            className="flex h-5 w-5 items-center justify-center rounded hover:bg-white/10 transition-colors"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <MoreHorizontal className="h-3 w-3" />
-          </button>
-        </div>
-      )}
-    </div>
-  );
-}
-
 function ChatMessage({ message, userInitials }: { message: Message; userInitials: string }) {
   const isUser = message.role === 'user';
   const [liked, setLiked] = useState<boolean | null>(null);

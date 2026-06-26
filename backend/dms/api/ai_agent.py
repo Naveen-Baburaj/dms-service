@@ -1436,6 +1436,40 @@ def _final_month_keys(month_limit: int) -> list[str]:
     return [add_months(today, -(month_limit - index - 1)).strftime("%Y-%m") for index in range(month_limit)]
 
 
+def _final_metric_summary_intent(query: str, route: dict[str, Any] | None = None) -> str | None:
+    # Detect metric-summary questions before record lookup captures sales/service words.
+    route_intent = str((route or {}).get("intent") or "")
+    if route_intent in {"sales_analysis", "service_analysis", "inventory_analysis"}:
+        return route_intent
+
+    q = query.lower().strip()
+
+    record_lookup_terms = [
+        "list", "records", "record", "table", "details", "detail", "lookup",
+        "show all sales", "show sales records", "show vehicle sales",
+    ]
+
+    # Do not override explicit record/table requests.
+    if any(term in q for term in record_lookup_terms):
+        return None
+
+    summary_terms = [
+        "what was", "what is", "how much", "how many", "total", "sum",
+        "over the last", "in the last", "last month", "last months",
+        "last quarter", "this month", "current month",
+    ]
+
+    if any(term in q for term in summary_terms):
+        if any(metric in q for metric in ["sales", "revenue", "income"]):
+            return "sales_analysis"
+        if any(metric in q for metric in ["service count", "service jobs", "services"]):
+            return "service_analysis"
+        if any(metric in q for metric in ["inventory", "stock"]):
+            return "inventory_analysis"
+
+    return None
+
+
 def _final_scope_filter(query: str, route: dict[str, Any] | None = None) -> tuple[dict[str, Any], str]:
     if not _is_admin():
         company_id, company_name = _user_company_scope()
@@ -1899,6 +1933,7 @@ def query(query: str | None = None):
 
     route = _final_llm_route(routing_query)
     route["_conversation_context"] = conversation_context
+    metric_summary_intent = _final_metric_summary_intent(routing_query, route)
 
     # Security always wins. Gemini is never allowed to authorize data.
     if _should_deny_cross_tenant_request(routing_query):
@@ -1912,6 +1947,15 @@ def query(query: str | None = None):
     # Chart requests get the generic multi-chart widget.
     elif _final_is_chart_query(routing_query, route):
         data = _build_all_charts_response(routing_query, route)
+
+    # Metric-summary questions must be handled before record lookup because
+    # words like "sales" are both metrics and record resources.
+    elif metric_summary_intent == "sales_analysis":
+        data = _build_sales_response(routing_query, route)
+    elif metric_summary_intent == "service_analysis":
+        data = _build_service_response(routing_query, route)
+    elif metric_summary_intent == "inventory_analysis":
+        data = _build_inventory_response(routing_query, route)
 
     # Record/table lookup, including fuzzy search and "show remaining".
     elif _final_detect_record_resource(routing_query, route):
