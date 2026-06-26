@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -28,7 +29,10 @@ def _require_playwright():
     except Exception as exc:
         raise RuntimeError(
             "Playwright is not installed in the Frappe environment. "
-            "Install it with: pip install playwright && python -m playwright install chromium"
+            f"Frappe Python: {sys.executable}. "
+            "Install it into the bench virtualenv with: "
+            "frappe-bench/env/bin/python -m pip install playwright && "
+            "PLAYWRIGHT_HOST_PLATFORM_OVERRIDE=ubuntu24.04-x64 frappe-bench/env/bin/python -m playwright install chromium"
         ) from exc
 
 
