@@ -2,6 +2,32 @@
   "name": "DMS RPA Job",
   "module": "DMS",
   "doctype": "DocType",
-  "fields": [],
-  "permissions": []
+  "custom": 0,
+  "istable": 0,
+  "editable_grid": 1,
+  "allow_rename": 1,
+  "autoname": "format:DMS-RPA-JOB-{YYYY}-{#####}",
+  "is_submittable": 0,
+  "track_changes": 1,
+  "sort_field": "modified",
+  "sort_order": "DESC",
+  "fields": [
+    { "fieldname": "provider", "fieldtype": "Data", "label": "Provider", "default": "GoHighLevel", "reqd": 1, "in_list_view": 1 },
+    { "fieldname": "job_type", "fieldtype": "Data", "label": "Job Type", "default": "Add Contact", "reqd": 1, "in_list_view": 1 },
+    { "fieldname": "status", "fieldtype": "Data", "label": "Status", "default": "Queued", "in_list_view": 1 },
+    { "fieldname": "save_target", "fieldtype": "Data", "label": "Save Target" },
+    { "fieldname": "contact", "fieldtype": "Link", "options": "DMS CRM Contact", "label": "Local Contact" },
+    { "fieldname": "session_name", "fieldtype": "Data", "label": "Session Name", "default": "default" },
+    { "fieldname": "contacts_url", "fieldtype": "Data", "label": "Contacts URL" },
+    { "fieldname": "tag_name", "fieldtype": "Data", "label": "Tag Name", "default": "dms_rpa_demo" },
+    { "fieldname": "payload_json", "fieldtype": "Code", "label": "Payload JSON", "options": "JSON" },
+    { "fieldname": "result_json", "fieldtype": "Code", "label": "Result JSON", "options": "JSON" },
+    { "fieldname": "error_message", "fieldtype": "Small Text", "label": "Error Message" },
+    { "fieldname": "started_at", "fieldtype": "Datetime", "label": "Started At" },
+    { "fieldname": "completed_at", "fieldtype": "Datetime", "label": "Completed At" },
+    { "fieldname": "created_by_user", "fieldtype": "Data", "label": "Created By User" }
+  ],
+  "permissions": [
+    { "role": "Group Admin", "read": 1, "write": 1, "create": 1, "delete": 1 }
+  ]
 }
