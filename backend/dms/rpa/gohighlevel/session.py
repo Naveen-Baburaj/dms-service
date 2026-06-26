@@ -65,7 +65,7 @@ def _upsert_session_doc(
     if contacts_url:
         doc.contacts_url = contacts_url
     if storage_path:
-        doc.state_file_path = _as_str_path(storage_path)
+        doc.storage_state_path = _as_str_path(storage_path)
     if status == "Active":
         doc.last_login_at = _now()
     doc.save(ignore_permissions=True)
