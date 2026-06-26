@@ -1347,6 +1347,10 @@ Extract:
 
 Rules:
 - "compare sales of honda and nexa" is tenant_comparison, companies ["Honda","NEXA"], not record_lookup.
+- "sales for honda and nexa" is tenant_comparison, companies ["Honda","NEXA"], not record_lookup.
+- "honda and nexa sales" is tenant_comparison, companies ["Honda","NEXA"], not record_lookup.
+- "what was the sales in the last 5 months" is sales_analysis, not record_lookup.
+- "nexa sales last 5 months" is sales_analysis, companies ["NEXA"], not record_lookup.
 - "show all sales data" is record_lookup, resource sales.
 - "show the remaining" means continue the previous record table.
 - "invoice for diya kuiren" is record_lookup, resource invoices, search_text "diya kuiren".
@@ -1469,6 +1473,119 @@ def _final_metric_summary_intent(query: str, route: dict[str, Any] | None = None
 
     return None
 
+
+
+def _final_route_companies(query: str, route: dict[str, Any] | None = None) -> list[str]:
+    """Return tenant/company names detected by Gemini and deterministic aliases."""
+    companies: list[str] = []
+
+    if route and isinstance(route.get("companies"), list):
+        for company in route["companies"]:
+            resolved = _company_name_from_alias(str(company))
+            if resolved and resolved not in companies:
+                companies.append(resolved)
+
+    for company in _final_company_mentions(query):
+        if company and company not in companies:
+            companies.append(company)
+
+    order = {"Honda": 0, "NEXA": 1, "Jaguar": 2}
+    companies.sort(key=lambda value: order.get(value, 99))
+    return companies
+
+
+def _final_explicit_record_lookup_query(query: str, route: dict[str, Any] | None = None) -> bool:
+    """Return True only when the user clearly asks for rows/details/list/table."""
+    q = query.lower().strip()
+    route = route or {}
+
+    explicit_terms = [
+        "record", "records", "table", "details", "detail", "list", "lookup",
+        "find", "search", "show all", "show latest", "view all", "open",
+    ]
+
+    explicit_sales_record_phrases = [
+        "sales data", "sales records", "vehicle sales records", "vehicle sales data",
+        "all sales", "latest sales", "list sales", "show sales data",
+        "show all sales data", "show all sales records",
+    ]
+
+    if any(term in q for term in explicit_sales_record_phrases):
+        return True
+
+    if any(term in q for term in explicit_terms):
+        return True
+
+    if re.search(r"\b(invoice|lead|customer|booking|test drive|service job|vehicle)\s+(for|of|named|called)\s+[a-z]", q):
+        return True
+
+    if route.get("intent") == "record_lookup":
+        if route.get("search_text") and not _final_route_companies(query, route):
+            return True
+        if any(term in q for term in explicit_terms):
+            return True
+
+    return False
+
+
+def _final_intelligent_intent(query: str, route: dict[str, Any] | None = None) -> str | None:
+    """Deterministic guardrail over Gemini/rule routing.
+
+    Gemini is still used when configured, but this guardrail prevents common DMS
+    ambiguity where "sales" can mean either KPI analysis or DMS Vehicle Sale rows.
+    """
+    route = route or {}
+    q = query.lower().strip()
+
+    companies = _final_route_companies(query, route)
+
+    has_sales_metric = any(term in q for term in [
+        "sales", "revenue", "income", "sale amount", "sales amount", "total sales",
+    ])
+    has_service_metric = any(term in q for term in [
+        "service count", "service jobs", "services", "service revenue", "servicing",
+    ])
+    has_inventory_metric = any(term in q for term in [
+        "inventory", "stock", "available vehicles", "vehicle stock",
+    ])
+
+    # Multi-company sales questions are comparisons unless the user explicitly
+    # asks for rows/table/list/records.
+    if has_sales_metric and len(companies) > 1 and not _final_explicit_record_lookup_query(query, route):
+        return "tenant_comparison"
+
+    # Explicit row/table/list requests should remain record lookup.
+    if _final_explicit_record_lookup_query(query, route):
+        return None
+
+    route_intent = str(route.get("intent") or "")
+    if route_intent in {"sales_analysis", "service_analysis", "inventory_analysis", "tenant_comparison"}:
+        if route_intent == "tenant_comparison":
+            return "tenant_comparison"
+        if route_intent == "sales_analysis" and len(companies) > 1:
+            return "tenant_comparison"
+        return route_intent
+
+    metric_context = any(term in q for term in [
+        "what was", "what is", "how much", "how many", "total", "sum",
+        "for ", "of ", "in the last", "last ", "this month", "current month",
+        "chart", "trend", "graph", "show me",
+    ])
+
+    if has_sales_metric:
+        if len(companies) > 1 or _final_is_comparison_query(query, route):
+            return "tenant_comparison"
+        if metric_context or companies:
+            return "sales_analysis"
+        return "sales_analysis"
+
+    if has_service_metric:
+        return "service_analysis"
+
+    if has_inventory_metric:
+        return "inventory_analysis"
+
+    return None
 
 def _final_scope_filter(query: str, route: dict[str, Any] | None = None) -> tuple[dict[str, Any], str]:
     if not _is_admin():
@@ -1934,27 +2051,29 @@ def query(query: str | None = None):
     route = _final_llm_route(routing_query)
     route["_conversation_context"] = conversation_context
     metric_summary_intent = _final_metric_summary_intent(routing_query, route)
+    intelligent_intent = _final_intelligent_intent(routing_query, route)
 
     # Security always wins. Gemini is never allowed to authorize data.
     if _should_deny_cross_tenant_request(routing_query):
         data = _build_cross_tenant_denial_response(routing_query)
 
-    # Comparison must be checked before record lookup because "sales" is both
-    # a resource and a comparison metric.
-    elif _final_is_comparison_query(routing_query, route):
+    # Intelligent metric routing runs before record lookup because "sales" can
+    # mean either a KPI/chart or the DMS Vehicle Sale table.
+    elif intelligent_intent == "tenant_comparison" or _final_is_comparison_query(routing_query, route):
         data = _build_tenant_comparison_response(routing_query, route)
 
-    # Chart requests get the generic multi-chart widget.
-    elif _final_is_chart_query(routing_query, route):
+    # Explicit chart/widget requests use chart builder unless the query is
+    # clearly a single metric/tenant analysis handled below.
+    elif _final_is_chart_query(routing_query, route) and intelligent_intent is None:
         data = _build_all_charts_response(routing_query, route)
 
-    # Metric-summary questions must be handled before record lookup because
-    # words like "sales" are both metrics and record resources.
-    elif metric_summary_intent == "sales_analysis":
+    elif intelligent_intent == "sales_analysis":
         data = _build_sales_response(routing_query, route)
-    elif metric_summary_intent == "service_analysis":
+
+    elif intelligent_intent == "service_analysis":
         data = _build_service_response(routing_query, route)
-    elif metric_summary_intent == "inventory_analysis":
+
+    elif intelligent_intent == "inventory_analysis":
         data = _build_inventory_response(routing_query, route)
 
     # Record/table lookup, including fuzzy search and "show remaining".
@@ -1968,11 +2087,11 @@ def query(query: str | None = None):
         intent = route.get("intent") if route.get("intent") in VALID_INTENTS else _detect_intent(routing_query)
 
         if intent == "sales_analysis":
-            data = _build_sales_response(routing_query)
+            data = _build_sales_response(routing_query, route)
         elif intent == "service_analysis":
-            data = _build_service_response(routing_query)
+            data = _build_service_response(routing_query, route)
         elif intent == "inventory_analysis":
-            data = _build_inventory_response(routing_query)
+            data = _build_inventory_response(routing_query, route)
         elif intent == "tenant_comparison":
             data = _build_tenant_comparison_response(routing_query, route)
         elif intent == "dashboard_charts":
