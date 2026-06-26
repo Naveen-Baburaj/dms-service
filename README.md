@@ -2,70 +2,94 @@
 
 Enterprise multi-brand dealer management system for **Honda**, **NEXA**, and **Jaguar** with a unified Group Admin view.
 
-## Project Structure
+## Current Architecture
 
+```text
+frontend/   Next.js 15 dashboard
+backend/    Frappe Framework app named dms
+deploy/     Frappe-oriented Nginx and Supervisor examples
+docs/       Architecture, API, deployment, and security notes
 ```
-carcompany/
-├── frontend/          # Next.js 15 application (Vercel)
-├── backend/           # Frappe Framework app (Ubuntu VPS)
-├── deploy/            # Nginx, Supervisor, setup scripts
-└── docs/              # Architecture, API, Deployment, Security guides
+
+The AI dashboard endpoint now lives inside the Frappe app:
+
+```text
+POST /api/method/dms.api.ai_agent.query
 ```
 
-## Quick Start
+The AI agent is database-backed. It reads from DMS DocTypes such as:
 
-### Frontend
+```text
+DMS Company
+DMS Customer
+DMS Vehicle
+DMS Vehicle Sale
+DMS Service Job
+DMS Lead
+DMS Booking
+DMS Test Drive
+DMS Invoice
+```
+
+No separate FastAPI AI backend is required.
+
+## Local URLs
+
+```text
+Frontend: http://localhost:3000/login
+Backend:  http://dms.localhost:8000
+AI API:   http://dms.localhost:8000/api/method/dms.api.ai_agent.query
+```
+
+## Frontend Quick Start
 
 ```bash
 cd frontend
 npm install
 cp .env.example .env.local
-# Set NEXT_PUBLIC_API_URL=http://localhost:8000
+# Set NEXT_PUBLIC_API_URL=http://dms.localhost:8000
 npm run dev
 ```
 
-Open [http://localhost:3000/login](http://localhost:3000/login)
-
-### Backend
+## Backend Quick Start
 
 ```bash
-# Install Frappe bench, create site, install app
-bench init ~/frappe-bench --frappe-branch version-15
-cd ~/frappe-bench
-bench get-app dms /path/to/backend/dms
-bench new-site localhost --admin-password admin
-bench --site localhost install-app dms
-bench --site localhost migrate
+conda activate dms-frappe
+cd ~/frappe/dms-frappe-bench
 bench start
 ```
 
-## Tech Stack
+In a second terminal:
 
-| Layer | Technology |
-|-------|-----------|
-| Frontend | Next.js 15, TypeScript, Tailwind CSS, shadcn/ui, Recharts, TanStack Query |
-| State | Zustand |
-| Backend | Frappe Framework 15, Python 3.10+ |
-| Database | MariaDB 10.6+ |
-| Cache / Queue | Redis 7 |
-| Authentication | JWT (HS256), 8h access + 30d refresh tokens |
-| Deployment | Vercel (frontend) + Ubuntu VPS / Nginx / Gunicorn (backend) |
+```bash
+conda activate dms-frappe
+cd ~/frappe/dms-frappe-bench
+bench --site dms.localhost migrate
+```
+
+## AI API Smoke Test
+
+```bash
+curl -X POST \
+  -H "Host: dms.localhost" \
+  -H "Content-Type: application/json" \
+  -H "x-user-role: tenant_user" \
+  -H "x-tenant-id: toyota" \
+  -d '{"query":"Show me last 3 months sales"}' \
+  http://localhost:8000/api/method/dms.api.ai_agent.query
+```
 
 ## User Roles
 
 | Role | Access |
 |------|--------|
-| Honda User | Honda leads, customers, sales (read + write) |
-| Honda Manager | Honda data (full CRUD + reports) |
-| NEXA User | NEXA data only |
-| NEXA Manager | NEXA data (full CRUD) |
-| Jaguar User | Jaguar data only |
-| Jaguar Manager | Jaguar data (full CRUD) |
-| Group Admin | All companies — full read/write, analytics |
+| Honda User | Honda-only dashboard data |
+| NEXA User | NEXA-only dashboard data |
+| Jaguar User | Jaguar-only dashboard data |
+| Group Admin | Cross-company dashboard data |
 
-## Documentation
+## Notes
 
-- [Architecture](docs/ARCHITECTURE.md)
-- [API Reference](docs/API.md)
-- [Deployment Guide](docs/DEPLOYMENT.md)
-- [Security Checklist](docs/SECURITY.md)
+- Current frontend mock login sends development headers to the Frappe API.
+- `allow_guest=True` remains only for the mock-login phase.
+- Remove mock headers and `allow_guest=True` after real Frappe authentication is wired end-to-end.
