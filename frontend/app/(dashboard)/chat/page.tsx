@@ -122,6 +122,27 @@ interface RecordTablePayload {
   data_source?: string;
 }
 
+
+interface GenericChartSpec {
+  id: string;
+  title: string;
+  description?: string;
+  type: 'bar' | 'line';
+  labels: string[];
+  series: number[];
+  total?: number;
+  prefix?: string;
+  suffix?: string;
+}
+
+interface GenericChartsPayload {
+  title: string;
+  scope: string;
+  month_limit: number;
+  charts: GenericChartSpec[];
+  data_source?: string;
+}
+
 interface TenantComparisonPayload {
   labels: string[];
   series: number[];
@@ -370,6 +391,103 @@ function RecordTableWidget({ payload }: { payload: unknown }) {
 }
 
 
+
+function GenericChartsWidget({ payload }: { payload: unknown }) {
+  const p = payload as GenericChartsPayload;
+  const charts = p.charts ?? [];
+
+  function formatValue(value: number, chart: GenericChartSpec): string {
+    const prefix = chart.prefix ?? '';
+    const suffix = chart.suffix ?? '';
+    const formatted = Math.abs(value) >= 100000 ? value.toLocaleString('en-IN') : String(Math.round(value));
+    return `${prefix}${formatted}${suffix}`;
+  }
+
+  function MiniChart({ chart }: { chart: GenericChartSpec }) {
+    const labels = chart.labels ?? [];
+    const values = (chart.series ?? []).map((value) => Number(value) || 0);
+    const max = Math.max(...values.map((value) => Math.abs(value)), 1);
+
+    if (chart.type === 'line' && values.length > 1) {
+      const width = 420;
+      const height = 120;
+      const pad = 16;
+      const points = values.map((value, index) => {
+        const x = pad + (index * (width - pad * 2)) / Math.max(values.length - 1, 1);
+        const y = height - pad - (value / max) * (height - pad * 2);
+        return `${x},${y}`;
+      }).join(' ');
+
+      return (
+        <div className="rounded-lg border border-border/40 p-3">
+          <div className="mb-2">
+            <p className="text-xs font-semibold">{chart.title}</p>
+            {chart.description && <p className="text-[10px] text-muted-foreground">{chart.description}</p>}
+          </div>
+          <svg viewBox={`0 0 ${width} ${height}`} className="h-36 w-full">
+            <polyline points={points} fill="none" stroke="currentColor" strokeWidth="2" className="text-violet-500" />
+            {values.map((value, index) => {
+              const x = pad + (index * (width - pad * 2)) / Math.max(values.length - 1, 1);
+              const y = height - pad - (value / max) * (height - pad * 2);
+              return <circle key={index} cx={x} cy={y} r="3" className="fill-violet-500" />;
+            })}
+          </svg>
+          <div className="mt-1 flex justify-between text-[10px] text-muted-foreground">
+            <span>{labels[0]}</span>
+            <span>Total: {formatValue(chart.total ?? values.reduce((a, b) => a + b, 0), chart)}</span>
+            <span>{labels[labels.length - 1]}</span>
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <div className="rounded-lg border border-border/40 p-3">
+        <div className="mb-3">
+          <p className="text-xs font-semibold">{chart.title}</p>
+          {chart.description && <p className="text-[10px] text-muted-foreground">{chart.description}</p>}
+        </div>
+        <div className="space-y-2">
+          {values.map((value, index) => (
+            <div key={index} className="grid grid-cols-[90px_1fr_70px] items-center gap-2 text-[10px]">
+              <span className="truncate text-muted-foreground">{labels[index]}</span>
+              <div className="h-2 rounded-full bg-muted">
+                <div
+                  className="h-2 rounded-full bg-violet-500"
+                  style={{ width: `${Math.max(3, (Math.abs(value) / max) * 100)}%` }}
+                />
+              </div>
+              <span className="text-right font-medium">{formatValue(value, chart)}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-3 rounded-xl border border-border/50 bg-background/60 p-4">
+      <div className="mb-3">
+        <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+          {p.title ?? 'Available charts'}
+        </p>
+        <p className="mt-0.5 text-[10px] text-muted-foreground">
+          Scope: {p.scope} · Last {p.month_limit} months · {charts.length} chart(s)
+        </p>
+      </div>
+
+      {charts.length === 0 ? (
+        <p className="text-xs text-muted-foreground text-center py-2">No chartable data found.</p>
+      ) : (
+        <div className="grid gap-3">
+          {charts.map((chart) => <MiniChart key={chart.id} chart={chart} />)}
+        </div>
+      )}
+    </div>
+  );
+}
+
+
 function TenantComparisonWidget({ payload }: { payload: unknown }) {
   const p = payload as TenantComparisonPayload;
   const data = (p.labels ?? []).map((label, i) => ({
@@ -430,6 +548,7 @@ function InlineWidgets({ agentData }: { agentData: AgentResponse }) {
         if (widgetId === 'inventory_table') return <InventoryTableWidget key={widgetId} payload={payload} />;
         if (widgetId === 'tenant_comparison_chart') return <TenantComparisonWidget key={widgetId} payload={payload} />;
         if (widgetId === 'record_table') return <RecordTableWidget key={widgetId} payload={payload} />;
+        if (widgetId === 'generic_charts') return <GenericChartsWidget key={widgetId} payload={payload} />;
         return null;
       })}
     </>
