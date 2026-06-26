@@ -106,6 +106,22 @@ interface InventoryPayload {
   status_counts?: Record<string, number>;
 }
 
+
+interface RecordTableColumn {
+  key: string;
+  label: string;
+}
+
+interface RecordTablePayload {
+  title: string;
+  resource: string;
+  doctype: string;
+  columns: RecordTableColumn[];
+  rows: Record<string, unknown>[];
+  total: number;
+  data_source?: string;
+}
+
 interface TenantComparisonPayload {
   labels: string[];
   series: number[];
@@ -293,6 +309,67 @@ function InventoryTableWidget({ payload }: { payload: unknown }) {
   );
 }
 
+
+function RecordTableWidget({ payload }: { payload: unknown }) {
+  const p = payload as RecordTablePayload;
+  const columns = p.columns ?? [];
+  const rows = p.rows ?? [];
+
+  function display(value: unknown): string {
+    if (value == null || value === '') return '—';
+    if (typeof value === 'number') {
+      if (value > 9999) return value.toLocaleString('en-IN');
+      return String(value);
+    }
+    return String(value).replace(/_/g, ' ');
+  }
+
+  return (
+    <div className="mt-3 rounded-xl border border-border/50 bg-background/60 p-4">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <div>
+          <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+            {p.title ?? 'Records'}
+          </p>
+          <p className="mt-0.5 text-[10px] text-muted-foreground">
+            Source: {p.doctype ?? 'DMS'} · {p.total ?? rows.length} database record(s)
+          </p>
+        </div>
+      </div>
+
+      {rows.length === 0 ? (
+        <p className="text-xs text-muted-foreground text-center py-2">No records found.</p>
+      ) : (
+        <div className="max-h-72 overflow-auto rounded-lg border border-border/40">
+          <table className="w-full text-xs">
+            <thead className="sticky top-0 bg-background">
+              <tr className="border-b border-border/50">
+                {columns.map((column) => (
+                  <th key={column.key} className="px-2 py-2 text-left font-medium text-muted-foreground">
+                    {column.label}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row, i) => (
+                <tr key={String(row.id ?? row.name ?? i)} className="border-b border-border/30 last:border-0">
+                  {columns.map((column) => (
+                    <td key={column.key} className="px-2 py-2">
+                      {display(row[column.key])}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+
 function TenantComparisonWidget({ payload }: { payload: unknown }) {
   const p = payload as TenantComparisonPayload;
   const data = (p.labels ?? []).map((label, i) => ({
@@ -352,6 +429,7 @@ function InlineWidgets({ agentData }: { agentData: AgentResponse }) {
         if (widgetId === 'service_count_chart') return <ServiceCountWidget key={widgetId} payload={payload} />;
         if (widgetId === 'inventory_table') return <InventoryTableWidget key={widgetId} payload={payload} />;
         if (widgetId === 'tenant_comparison_chart') return <TenantComparisonWidget key={widgetId} payload={payload} />;
+        if (widgetId === 'record_table') return <RecordTableWidget key={widgetId} payload={payload} />;
         return null;
       })}
     </>
@@ -455,10 +533,16 @@ export default function ChatPage() {
 
     setIsTyping(true);
     try {
+      const conversationContext = messages
+        .slice(-6)
+        .map((message) => `${message.role}: ${message.content}`)
+        .join('\n');
+
       const data = await queryDashboardAgent({
         query: text.trim(),
         role: resolveRole(user),
         company: resolveCompany(user),
+        conversationContext,
       });
       setIsTyping(false);
       setMessages((prev) => [

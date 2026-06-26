@@ -86,13 +86,17 @@ export async function queryDashboardAgent(opts: {
   query: string;
   role: string;
   company: string;
+  conversationContext?: string;
 }): Promise<AgentResponse> {
   const headers = resolveAgentHeaders(opts.role, opts.company);
 
   const res = await fetch(`${API_BASE}/api/method/dms.api.ai_agent.query`, {
     method: 'POST',
     headers,
-    body: JSON.stringify({ query: opts.query }),
+    body: JSON.stringify({
+      query: opts.query,
+      conversation_context: opts.conversationContext ?? '',
+    }),
   });
 
   const raw = await res.json().catch(() => null);

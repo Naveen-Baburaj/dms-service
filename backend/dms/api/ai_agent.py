@@ -34,6 +34,7 @@ ALL_WIDGETS = [
     "service_count_chart",
     "inventory_table",
     "tenant_comparison_chart",
+    "record_table",
 ]
 
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
@@ -696,6 +697,211 @@ def _build_tenant_comparison_response(query: str) -> dict[str, Any]:
     )
 
 
+
+
+RECORD_RESOURCES = {
+    "leads": {
+        "doctype": "DMS Lead",
+        "title": "Leads",
+        "keywords": ["lead", "leads", "enquiry", "enquiries", "prospect", "prospects"],
+        "columns": [
+            {"key": "lead_name", "label": "Lead"},
+            {"key": "mobile_no", "label": "Mobile"},
+            {"key": "vehicle_interest", "label": "Interest"},
+            {"key": "source", "label": "Source"},
+            {"key": "status", "label": "Status"},
+        ],
+        "fields": ["name", "company_id", "company_name", "lead_name", "mobile_no", "email", "vehicle_interest", "source", "status", "creation"],
+    },
+    "customers": {
+        "doctype": "DMS Customer",
+        "title": "Customers",
+        "keywords": ["customer", "customers"],
+        "columns": [
+            {"key": "customer_name", "label": "Customer"},
+            {"key": "mobile_no", "label": "Mobile"},
+            {"key": "customer_type", "label": "Type"},
+            {"key": "total_purchases", "label": "Purchases"},
+            {"key": "status", "label": "Status"},
+        ],
+        "fields": ["name", "company_id", "company_name", "customer_name", "mobile_no", "email", "customer_type", "total_purchases", "status", "creation"],
+    },
+    "sales": {
+        "doctype": "DMS Vehicle Sale",
+        "title": "Vehicle Sales",
+        "keywords": ["sale", "sales", "sold", "deliveries", "delivery"],
+        "columns": [
+            {"key": "customer_name", "label": "Customer"},
+            {"key": "model", "label": "Model"},
+            {"key": "variant", "label": "Variant"},
+            {"key": "final_price", "label": "Amount"},
+            {"key": "status", "label": "Status"},
+        ],
+        "fields": ["name", "company_id", "company_name", "customer_name", "model", "variant", "final_price", "payment_mode", "status", "creation"],
+    },
+    "bookings": {
+        "doctype": "DMS Booking",
+        "title": "Bookings",
+        "keywords": ["booking", "bookings", "reserved", "reservation"],
+        "columns": [
+            {"key": "customer_name", "label": "Customer"},
+            {"key": "model", "label": "Model"},
+            {"key": "variant", "label": "Variant"},
+            {"key": "booking_amount", "label": "Amount"},
+            {"key": "status", "label": "Status"},
+        ],
+        "fields": ["name", "company_id", "company_name", "customer_name", "model", "variant", "booking_amount", "booking_date", "expected_delivery", "status", "creation"],
+    },
+    "test_drives": {
+        "doctype": "DMS Test Drive",
+        "title": "Test Drives",
+        "keywords": ["test drive", "test drives", "drive", "drives"],
+        "columns": [
+            {"key": "contact_name", "label": "Contact"},
+            {"key": "mobile_no", "label": "Mobile"},
+            {"key": "model", "label": "Model"},
+            {"key": "scheduled_date", "label": "Date"},
+            {"key": "status", "label": "Status"},
+        ],
+        "fields": ["name", "company_id", "company_name", "contact_name", "mobile_no", "model", "scheduled_date", "scheduled_time", "rating", "status", "creation"],
+    },
+    "service_jobs": {
+        "doctype": "DMS Service Job",
+        "title": "Service Jobs",
+        "keywords": ["service job", "service jobs", "job card", "job cards", "services"],
+        "columns": [
+            {"key": "customer_name", "label": "Customer"},
+            {"key": "vehicle_reg_no", "label": "Reg No"},
+            {"key": "service_type", "label": "Type"},
+            {"key": "total_amount", "label": "Amount"},
+            {"key": "status", "label": "Status"},
+        ],
+        "fields": ["name", "company_id", "company_name", "customer_name", "vehicle_reg_no", "model", "service_type", "total_amount", "status", "creation"],
+    },
+    "invoices": {
+        "doctype": "DMS Invoice",
+        "title": "Invoices",
+        "keywords": ["invoice", "invoices", "bill", "bills", "payment", "payments"],
+        "columns": [
+            {"key": "customer_name", "label": "Customer"},
+            {"key": "invoice_type", "label": "Type"},
+            {"key": "total_amount", "label": "Total"},
+            {"key": "payment_status", "label": "Payment"},
+            {"key": "due_date", "label": "Due"},
+        ],
+        "fields": ["name", "company_id", "company_name", "customer_name", "invoice_type", "total_amount", "payment_status", "due_date", "creation"],
+    },
+    "vehicles": {
+        "doctype": "DMS Vehicle",
+        "title": "Vehicles",
+        "keywords": ["vehicle", "vehicles", "inventory", "stock", "cars"],
+        "columns": [
+            {"key": "vehicle_name", "label": "Vehicle"},
+            {"key": "model", "label": "Model"},
+            {"key": "variant", "label": "Variant"},
+            {"key": "color", "label": "Color"},
+            {"key": "stock_status", "label": "Status"},
+        ],
+        "fields": ["name", "company_id", "company_name", "vehicle_name", "model", "variant", "color", "stock_status", "creation"],
+    },
+}
+
+
+def _is_followup_query(query: str) -> bool:
+    q = query.lower().strip()
+    return any(term in q for term in ["i meant", "i mean", "that one", "those", "it", "same", "previous", "above"])
+
+
+def _routing_query(user_query: str, conversation_context: str | None) -> str:
+    if conversation_context and _is_followup_query(user_query):
+        return f"{conversation_context}\nCurrent clarification: {user_query}"
+    return user_query
+
+
+def _detect_record_resource(query: str) -> str | None:
+    q = query.lower()
+    list_terms = ["list", "show", "display", "give", "get", "view", "table", "records", "data"]
+
+    has_list_intent = any(term in q for term in list_terms)
+
+    for resource, config in RECORD_RESOURCES.items():
+        if any(keyword in q for keyword in config["keywords"]):
+            if has_list_intent or resource in {"leads", "customers", "bookings", "test_drives", "invoices", "vehicles"}:
+                return resource
+
+    return None
+
+
+def _existing_fields(doctype: str, fields: list[str]) -> list[str]:
+    meta = frappe.get_meta(doctype)
+    system_fields = {"name", "owner", "creation", "modified", "modified_by", "docstatus", "idx"}
+    selected = [field for field in fields if field in system_fields or meta.has_field(field)]
+
+    for field in ["name", "creation"]:
+        if field not in selected:
+            selected.append(field)
+
+    return selected
+
+
+def _record_table_response(query: str) -> dict[str, Any]:
+    resource = _detect_record_resource(query)
+    if not resource:
+        return _build_out_of_scope_response()
+
+    config = RECORD_RESOURCES[resource]
+    doctype = config["doctype"]
+    company_id, company_name = _resolve_company_scope(query)
+
+    filters: dict[str, Any] = {}
+    if company_id:
+        filters["company_id"] = company_id
+
+    fields = _existing_fields(doctype, config["fields"])
+    rows = frappe.get_all(
+        doctype,
+        filters=filters,
+        fields=fields,
+        order_by="creation desc",
+        limit_page_length=10,
+    )
+
+    enriched_rows = []
+    for row in rows:
+        item = dict(row)
+        item["id"] = item.get("name")
+        if item.get("creation"):
+            item["created_at"] = str(item.get("creation"))
+        if item.get("company_id") and not item.get("company_name"):
+            item["company_name"] = _company_name_from_id(item.get("company_id"))
+        enriched_rows.append(item)
+
+    display_name = company_name or "all allowed companies"
+    total = frappe.db.count(doctype, filters) or 0
+
+    return _base_response(
+        intent="record_lookup",
+        metric=resource,
+        time_range="latest records",
+        company_id=company_id,
+        company_name=company_name,
+        widgets_to_show=["record_table"],
+        text_response=f"Here are the latest {config['title'].lower()} for {display_name}. Showing {len(enriched_rows)} of {total} database record(s).",
+        widget_payloads={
+            "record_table": {
+                "title": config["title"],
+                "resource": resource,
+                "doctype": doctype,
+                "columns": config["columns"],
+                "rows": enriched_rows,
+                "total": total,
+                "data_source": "database",
+            }
+        },
+        other={"data_source": "database", "doctype": doctype},
+    )
+
+
 def _build_out_of_scope_response() -> dict[str, Any]:
     company_id, company_name = _user_company_scope()
     return _base_response(
@@ -720,24 +926,29 @@ def query(query: str | None = None):
 
     user_query = str(user_query).strip()
 
-    if _should_deny_cross_tenant_request(user_query):
-        data = _build_cross_tenant_denial_response(user_query)
-    elif _is_knowledge_lookup_query(user_query):
-        data = build_knowledge_response(user_query)
+    conversation_context = payload.get("conversation_context") or payload.get("history")
+    routing_query = _routing_query(user_query, conversation_context)
+
+    if _should_deny_cross_tenant_request(routing_query):
+        data = _build_cross_tenant_denial_response(routing_query)
+    elif _is_knowledge_lookup_query(routing_query):
+        data = build_knowledge_response(routing_query)
+    elif _detect_record_resource(routing_query):
+        data = _record_table_response(routing_query)
     else:
-        intent = _detect_intent(user_query)
+        intent = _detect_intent(routing_query)
         if intent == "sales_analysis":
-            data = _build_sales_response(user_query)
+            data = _build_sales_response(routing_query)
         elif intent == "service_analysis":
-            data = _build_service_response(user_query)
+            data = _build_service_response(routing_query)
         elif intent == "inventory_analysis":
-            data = _build_inventory_response(user_query)
+            data = _build_inventory_response(routing_query)
         elif intent == "tenant_comparison":
-            data = _build_tenant_comparison_response(user_query)
+            data = _build_tenant_comparison_response(routing_query)
         elif intent == "out_of_scope":
             data = _build_out_of_scope_response()
         else:
-            data = build_knowledge_response(user_query)
+            data = build_knowledge_response(routing_query)
 
     return success(data=data)
 
