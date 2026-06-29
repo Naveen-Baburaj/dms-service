@@ -1484,6 +1484,15 @@ Return these fields:
 - confidence: number from 0 to 1
 
 Decision rules:
+- For every valid DMS question, choose the closest database-backed intent. Do not return out_of_scope for DMS data questions.
+- Distinguish sales revenue from vehicle sales count.
+- "number of vehicles sold", "how many cars sold", "number of Honda sold", "Honda sold last month", and "number of sales in last 3 months" mean vehicle sales count from DMS Vehicle Sale.
+- For vehicle sales count questions, use intent sales_analysis, resource sales, and requested_fields ["count"].
+- For "total sales", "sales revenue", "sales amount", "how much sales", and "income", use sales revenue from final_price.
+- If the user asks a KPI over multiple months, such as "last 3 months", prefer a chart-capable response by setting month_limit correctly.
+- If the user asks a single company question, include that company in companies.
+- If the user asks multi-company comparison, use tenant_comparison.
+- Tenant permission is not decided by you. The backend enforces authorised scope after your plan.
 - Use record_lookup only when the user asks for table/list/records/details OR asks for a specific field about a person/customer/lead/invoice/vehicle.
 - "what is the phone number of John Kurien" is record_lookup, resource customers, search_text "John Kurien", requested_fields ["mobile_no", "company_name", "email", "status"].
 - "show contact details of John Kurien" is record_lookup, resource customers, search_text "John Kurien", requested_fields ["mobile_no", "email", "company_name", "status"].
@@ -2452,6 +2461,17 @@ def query(query: str | None = None):
         )
         return success(data=data)
 
+
+
+    # OPENAI_GPT54MINI_NORMALIZER_START
+    # LLM must succeed first. This only normalizes a successful LLM plan
+    # into safe backend DMS data execution. If the LLM fails, backend LLM error remains.
+    normalized_intent = _openai_gpt54mini_normalized_intent(routing_query, route, llm_intent)
+    if normalized_intent in VALID_INTENTS:
+        llm_intent = normalized_intent
+        route["intent"] = normalized_intent
+    # OPENAI_GPT54MINI_NORMALIZER_END
+
     # Tenant isolation is deterministic and always runs before data access.
     # Admin can access all allowed tenants. Tenant users are restricted to their own company.
     if _should_deny_cross_tenant_request(routing_query):
@@ -2560,3 +2580,3676 @@ def examples():
             "response_fields": ["intent", "filters_applied", "widgets_to_show", "widgets_to_hide", "text_response", "widget_payloads"],
         }
     )
+
+# OPENAI_GPT54MINI_FULL_PATCH_START
+
+OPENAI_DEFAULT_MODEL = os.getenv("OPENAI_MODEL", "gpt-5.4-mini")
+
+
+def _openai_gpt54mini_provider_config() -> tuple[str, str | None, str]:
+    provider = (
+        os.getenv("LLM_PROVIDER")
+        or frappe.conf.get("llm_provider")
+        or frappe.conf.get("LLM_PROVIDER")
+        or "gemini"
+    )
+    provider = str(provider).strip().lower()
+
+    api_key = (
+        os.getenv("OPENAI_API_KEY")
+        or frappe.conf.get("openai_api_key")
+        or frappe.conf.get("OPENAI_API_KEY")
+    )
+
+    model = (
+        os.getenv("OPENAI_MODEL")
+        or frappe.conf.get("openai_model")
+        or frappe.conf.get("OPENAI_MODEL")
+        or OPENAI_DEFAULT_MODEL
+    )
+    model = str(model).strip() or OPENAI_DEFAULT_MODEL
+
+    return provider, api_key, model
+
+
+def _openai_gpt54mini_planner_prompt(query: str) -> str:
+    return f"""
+You are Vividity, the semantic planning layer for a Dealer Management System chatbot.
+
+Return only valid JSON matching the provided schema. No markdown. No prose.
+
+Your job:
+- Understand the user's natural language question.
+- Select the correct DMS intent/resource/company/time/search fields.
+- Decide if the answer should be a plain KPI, table/list, chart, or comparison.
+- The backend will enforce permissions and query the database. You do not authorize access.
+
+Supported intents:
+- record_lookup
+- dashboard_charts
+- tenant_comparison
+- sales_analysis
+- service_analysis
+- inventory_analysis
+- knowledge_lookup
+- out_of_scope
+
+Supported resources:
+- leads
+- customers
+- sales
+- bookings
+- test_drives
+- service_jobs
+- invoices
+- vehicles
+
+Available companies:
+- Honda
+- NEXA
+- Jaguar
+
+Return fields:
+- intent: one supported intent
+- resource: one supported resource or null
+- companies: array using Honda, NEXA, Jaguar only
+- month_limit: integer or null
+- search_text: customer/person/model/invoice/search phrase or null
+- requested_fields: array of requested fields, such as count, creation, customer_name, model, final_price, total_amount, mobile_no, email, company_name, status
+- pagination_action: first, next, remaining, or null
+- wants_all_charts: boolean
+- confidence: number from 0 to 1
+
+Core DMS reasoning rules:
+1. Valid DMS data questions must not become out_of_scope.
+2. Tenant security is handled by backend. You only identify requested company names.
+3. "sold", "cars sold", "vehicles sold", "vehicle sales", and "sales records" refer to DMS Vehicle Sale, resource sales.
+4. "number of vehicles sold", "how many cars sold", "number of Honda sold", "Honda sold last month", "cars sold this month", and "number of sales in last 3 months" mean sales count, not revenue.
+5. For sales count questions, use intent sales_analysis, resource sales, requested_fields ["count"].
+6. "total sales", "sales revenue", "sales amount", "how much sales", "income", and "revenue" mean revenue from final_price.
+7. "date of Honda cars sold", "when did Honda sell cars", "show sold records", "list cars sold", "who bought Honda cars", and "show sales details" mean record_lookup, resource sales.
+8. For sold date/detail questions, requested_fields should include ["creation","customer_name","model","variant","final_price","status"].
+9. If the user asks over multiple months, such as "last 3 months", set month_limit to that number.
+10. If the question is a KPI over multiple months, it is chart-capable even if the user did not explicitly say "chart".
+11. If the user explicitly asks chart/graph/trend/month-wise, route to the analysis intent or dashboard_charts as appropriate.
+12. If the user asks "show all charts", "available charts", or "dashboard widgets", use dashboard_charts.
+13. If the user asks for table/list/records/details, use record_lookup.
+14. If the user asks phone/email/contact/customer field, use record_lookup and the appropriate resource.
+15. If the user asks multi-company comparison, use tenant_comparison.
+16. Single-company KPI questions should include exactly that company in companies.
+17. Do not invent companies outside Honda, NEXA, Jaguar.
+18. If the user asks vague DMS data but a resource is clear, choose that resource.
+
+Examples:
+- "number of honda sold" -> sales_analysis, resource sales, companies ["Honda"], requested_fields ["count"]
+- "honda sold last month" -> sales_analysis, resource sales, companies ["Honda"], requested_fields ["count"]
+- "number of sales in last 3 months" -> sales_analysis, resource sales, month_limit 3, requested_fields ["count"]
+- "date of honda cars sold" -> record_lookup, resource sales, companies ["Honda"], requested_fields ["creation","customer_name","model","variant","final_price","status"]
+- "show honda sold records" -> record_lookup, resource sales, companies ["Honda"]
+- "honda sales revenue in last 3 months" -> sales_analysis, resource sales, companies ["Honda"], month_limit 3, requested_fields ["final_price"]
+- "show all charts for last 4 months" -> dashboard_charts, wants_all_charts true, month_limit 4
+- "how many leads" -> record_lookup, resource leads, requested_fields ["count"]
+- "latest bookings" -> record_lookup, resource bookings
+- "service jobs last month" -> service_analysis or record_lookup depending whether the user asks count/KPI or list/details
+- "invoice amount of Arjun Pillai" -> record_lookup, resource invoices, search_text "Arjun Pillai", requested_fields ["total_amount","payment_status"]
+- "what is John Kurien phone number" -> record_lookup, resource customers, search_text "John Kurien", requested_fields ["mobile_no","email","company_name","status"]
+
+User query:
+{query}
+""".strip()
+
+
+def _openai_gpt54mini_schema() -> dict[str, Any]:
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "intent": {
+                "type": "string",
+                "enum": [
+                    "record_lookup",
+                    "dashboard_charts",
+                    "tenant_comparison",
+                    "sales_analysis",
+                    "service_analysis",
+                    "inventory_analysis",
+                    "knowledge_lookup",
+                    "out_of_scope",
+                ],
+            },
+            "resource": {
+                "anyOf": [
+                    {
+                        "type": "string",
+                        "enum": [
+                            "leads",
+                            "customers",
+                            "sales",
+                            "bookings",
+                            "test_drives",
+                            "service_jobs",
+                            "invoices",
+                            "vehicles",
+                        ],
+                    },
+                    {"type": "null"},
+                ]
+            },
+            "companies": {
+                "type": "array",
+                "items": {"type": "string", "enum": ["Honda", "NEXA", "Jaguar"]},
+            },
+            "month_limit": {"anyOf": [{"type": "integer"}, {"type": "null"}]},
+            "search_text": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+            "requested_fields": {"type": "array", "items": {"type": "string"}},
+            "pagination_action": {
+                "anyOf": [
+                    {"type": "string", "enum": ["first", "next", "remaining"]},
+                    {"type": "null"},
+                ]
+            },
+            "wants_all_charts": {"type": "boolean"},
+            "confidence": {"type": "number"},
+        },
+        "required": [
+            "intent",
+            "resource",
+            "companies",
+            "month_limit",
+            "search_text",
+            "requested_fields",
+            "pagination_action",
+            "wants_all_charts",
+            "confidence",
+        ],
+    }
+
+
+def _openai_gpt54mini_extract_text(response_json: dict[str, Any]) -> str | None:
+    if isinstance(response_json.get("output_text"), str):
+        return response_json["output_text"]
+
+    pieces: list[str] = []
+    for item in response_json.get("output") or []:
+        for content in item.get("content") or []:
+            if isinstance(content.get("text"), str):
+                pieces.append(content["text"])
+
+    if pieces:
+        return "\n".join(pieces)
+
+    return None
+
+
+def _openai_gpt54mini_route(query: str) -> dict[str, Any]:
+    _provider, api_key, model = _openai_gpt54mini_provider_config()
+
+    if not api_key:
+        return {
+            "_llm_status": "missing_api_key",
+            "_llm_error": "openai_api_key/OPENAI_API_KEY not found in environment or site config",
+            "_llm_provider": "openai",
+            "_llm_model": model,
+        }
+
+    payload = {
+        "model": model,
+        "input": _openai_gpt54mini_planner_prompt(query),
+        "text": {
+            "format": {
+                "type": "json_schema",
+                "name": "dms_route",
+                "strict": True,
+                "schema": _openai_gpt54mini_schema(),
+            }
+        },
+        "store": False,
+    }
+
+    try:
+        import urllib.request
+        import urllib.error
+
+        req = urllib.request.Request(
+            "https://api.openai.com/v1/responses",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {api_key}",
+            },
+            method="POST",
+        )
+
+        with urllib.request.urlopen(req, timeout=75) as res:
+            raw = res.read().decode("utf-8")
+            response_json = json.loads(raw)
+
+        output_text = _openai_gpt54mini_extract_text(response_json)
+        parsed = _safe_json_loads(output_text)
+
+        if not isinstance(parsed, dict):
+            return {
+                "_llm_status": "invalid_response",
+                "_llm_error": "OpenAI returned empty/non-dict structured JSON response",
+                "_llm_provider": "openai",
+                "_llm_model": model,
+            }
+
+        if parsed.get("intent") not in VALID_INTENTS:
+            return {
+                "_llm_status": "invalid_intent",
+                "_llm_error": f"Invalid intent from OpenAI: {parsed.get('intent')}",
+                "_raw_route": parsed,
+                "_llm_provider": "openai",
+                "_llm_model": model,
+            }
+
+        if not isinstance(parsed.get("companies"), list):
+            parsed["companies"] = []
+
+        if not isinstance(parsed.get("requested_fields"), list):
+            parsed["requested_fields"] = []
+
+        parsed["_llm_status"] = "ok"
+        parsed["_llm_error"] = None
+        parsed["_llm_provider"] = "openai"
+        parsed["_llm_model"] = model
+        return parsed
+
+    except Exception as exc:
+        return {
+            "_llm_status": "call_failed",
+            "_llm_error": str(exc)[:1000],
+            "_llm_provider": "openai",
+            "_llm_model": model,
+        }
+
+
+def _openai_gpt54mini_has_any(query: str, terms: list[str]) -> bool:
+    q = query.lower()
+    return any(term in q for term in terms)
+
+
+def _openai_gpt54mini_route_companies(query: str, route: dict[str, Any] | None = None) -> list[str]:
+    route = route or {}
+    companies: list[str] = []
+
+    if isinstance(route.get("companies"), list):
+        for company in route["companies"]:
+            resolved = _company_name_from_alias(str(company))
+            if resolved and resolved not in companies:
+                companies.append(resolved)
+
+    for company in _final_company_mentions(query):
+        if company and company not in companies:
+            companies.append(company)
+
+    order = {"Honda": 0, "NEXA": 1, "Jaguar": 2}
+    companies.sort(key=lambda name: order.get(name, 99))
+    return companies
+
+
+def _openai_gpt54mini_resource_from_query(query: str, route: dict[str, Any] | None = None) -> str | None:
+    route = route or {}
+
+    if route.get("resource") in FINAL_RECORD_RESOURCES:
+        return str(route["resource"])
+
+    q = query.lower()
+
+    if _openai_gpt54mini_has_any(q, ["sold", "sale", "sales", "vehicle sale", "cars sold", "vehicles sold", "delivery"]):
+        return "sales"
+
+    return _final_detect_record_resource(query, route)
+
+
+def _openai_gpt54mini_time_filter(query: str, route: dict[str, Any] | None = None) -> tuple[dict[str, Any], str, int | None]:
+    from datetime import timedelta
+
+    q = query.lower().strip()
+    today = getdate(nowdate())
+    filters: dict[str, Any] = {}
+
+    month_limit = _final_month_limit(query, route)
+
+    if "today" in q:
+        d = today.strftime("%Y-%m-%d")
+        filters["creation"] = ["between", [d, d]]
+        return filters, "today", None
+
+    if "yesterday" in q:
+        d = (today - timedelta(days=1)).strftime("%Y-%m-%d")
+        filters["creation"] = ["between", [d, d]]
+        return filters, "yesterday", None
+
+    if "last month" in q or "previous month" in q:
+        first_this_month = today.replace(day=1)
+        first_last_month = add_months(first_this_month, -1)
+        last_last_month = first_this_month - timedelta(days=1)
+        filters["creation"] = [
+            "between",
+            [first_last_month.strftime("%Y-%m-%d"), last_last_month.strftime("%Y-%m-%d")],
+        ]
+        return filters, "last month", 1
+
+    if "this month" in q or "current month" in q:
+        first_this_month = today.replace(day=1)
+        filters["creation"] = [
+            "between",
+            [first_this_month.strftime("%Y-%m-%d"), today.strftime("%Y-%m-%d")],
+        ]
+        return filters, "this month", 1
+
+    if "last week" in q or "past week" in q:
+        start = today - timedelta(days=7)
+        filters["creation"] = ["between", [start.strftime("%Y-%m-%d"), today.strftime("%Y-%m-%d")]]
+        return filters, "the last 7 days", None
+
+    if month_limit:
+        start, end = _month_window(month_limit)
+        if start and end:
+            filters["creation"] = ["between", [start, end]]
+        return filters, f"the last {month_limit} months", month_limit
+
+    return filters, "all available months", None
+
+
+def _openai_gpt54mini_sales_count_query(query: str, route: dict[str, Any] | None = None) -> bool:
+    q = query.lower().strip()
+    route = route or {}
+
+    if _openai_gpt54mini_has_any(q, ["phone number", "contact number", "mobile number", "email of", "mail of"]):
+        return False
+
+    if _openai_gpt54mini_has_any(q, [
+        "revenue", "income", "sales amount", "sale amount", "sales value",
+        "total sales", "how much sales", "how much revenue",
+    ]):
+        return False
+
+    requested_fields = route.get("requested_fields")
+    if isinstance(requested_fields, list):
+        joined = " ".join(str(field).lower() for field in requested_fields)
+        if "count" in joined and _openai_gpt54mini_has_any(q, ["sold", "sale", "sales", "vehicle", "vehicles", "car", "cars"]):
+            return True
+
+    if _openai_gpt54mini_has_any(q, ["how many", "number of", "count of", "total number", "sales count"]):
+        if _openai_gpt54mini_has_any(q, ["sold", "sale", "sales", "vehicle", "vehicles", "car", "cars", "honda", "nexa", "jaguar"]):
+            return True
+
+    if _openai_gpt54mini_has_any(q, ["sold", "cars sold", "vehicles sold", "units sold", "sold cars", "sold vehicles"]):
+        return True
+
+    return False
+
+
+def _openai_gpt54mini_revenue_query(query: str) -> bool:
+    return _openai_gpt54mini_has_any(query, [
+        "revenue", "income", "sales amount", "sale amount", "sales value",
+        "total sales", "how much sales", "how much revenue",
+    ])
+
+
+def _openai_gpt54mini_detail_or_date_query(query: str) -> bool:
+    return _openai_gpt54mini_has_any(query, [
+        "date", "dates", "when", "which date", "sale date", "sold date",
+        "details", "detail", "list", "records", "record", "show", "latest",
+        "who", "which customer", "customer name", "invoice", "status",
+    ])
+
+
+def _openai_gpt54mini_should_chart(query: str, route: dict[str, Any] | None = None, month_limit: int | None = None) -> bool:
+    q = query.lower().strip()
+
+    if _final_is_chart_query(query, route):
+        return True
+
+    if month_limit and month_limit >= 2:
+        return True
+
+    if re.search(r"last\s+\d+\s+months?", q):
+        return True
+
+    if _openai_gpt54mini_has_any(q, ["monthly", "month wise", "month-wise", "trend", "over time"]):
+        return True
+
+    return False
+
+
+def _openai_gpt54mini_normalized_intent(query: str, route: dict[str, Any] | None, current_intent: str) -> str | None:
+    route = route or {}
+    q = query.lower().strip()
+
+    if _final_is_chart_query(query, route) and _openai_gpt54mini_has_any(q, ["all chart", "available chart", "widgets"]):
+        return "dashboard_charts"
+
+    resource = _openai_gpt54mini_resource_from_query(query, route)
+    companies = _openai_gpt54mini_route_companies(query, route)
+
+    if resource == "sales":
+        if len(companies) > 1 or _final_is_comparison_query(query, route):
+            return "tenant_comparison"
+
+        if _openai_gpt54mini_detail_or_date_query(query):
+            return "record_lookup"
+
+        return "sales_analysis"
+
+    if resource:
+        return "record_lookup"
+
+    if current_intent in VALID_INTENTS:
+        return current_intent
+
+    return None
+
+
+def _openai_gpt54mini_scope(query: str, route: dict[str, Any] | None = None) -> tuple[dict[str, Any], str, str | None, str | None]:
+    filters, display_scope = _final_scope_filter(query, route)
+    company_id, company_name = _resolve_company_scope(query, route)
+    return filters, display_scope, company_id, company_name
+
+
+def _openai_gpt54mini_apply_period(filters: dict[str, Any], query: str, route: dict[str, Any] | None = None) -> tuple[dict[str, Any], str, int | None]:
+    time_filter, time_text, month_limit = _openai_gpt54mini_time_filter(query, route)
+    final_filters = dict(filters)
+    final_filters.update(time_filter)
+    return final_filters, time_text, month_limit
+
+
+def _openai_gpt54mini_monthly_summary(rows: list[dict[str, Any]], value_field: str, count_mode: bool = False, month_limit: int | None = None) -> dict[str, Any]:
+    labels = _final_month_keys(month_limit) if month_limit and month_limit >= 2 else []
+    totals: dict[str, float] = defaultdict(float)
+
+    for label in labels:
+        totals[label] = 0.0
+
+    for row in rows:
+        label = _month_label(row.get("creation")) or "Unknown"
+        if labels and label not in totals:
+            continue
+        totals[label] += 1 if count_mode else float(row.get(value_field) or 0)
+
+    final_labels = labels if labels else sorted(totals.keys())
+    series = [totals[label] for label in final_labels]
+    total = sum(series)
+
+    highest_month = None
+    if final_labels:
+        peak_index = max(range(len(final_labels)), key=lambda index: series[index])
+        highest_month = {"month": final_labels[peak_index], value_field: series[peak_index]}
+
+    return {
+        "labels": final_labels,
+        "series": series,
+        "total": total,
+        "highest_month": highest_month,
+    }
+
+
+def _openai_gpt54mini_resource_fields(resource: str) -> list[str]:
+    base = FINAL_RECORD_RESOURCES[resource]["fields"]
+    extras = ["company_name", "creation"]
+
+    if resource == "sales":
+        extras += ["customer_name", "model", "variant", "final_price", "payment_mode", "status", "invoice_no"]
+    elif resource == "invoices":
+        extras += ["customer_name", "invoice_type", "total_amount", "payment_status", "due_date", "reference_doc"]
+    elif resource == "service_jobs":
+        extras += ["customer_name", "vehicle_reg_no", "model", "service_type", "total_amount", "status"]
+    elif resource == "bookings":
+        extras += ["customer_name", "model", "variant", "booking_amount", "booking_date", "expected_delivery", "status"]
+    elif resource == "test_drives":
+        extras += ["contact_name", "mobile_no", "model", "scheduled_date", "scheduled_time", "status"]
+    elif resource == "vehicles":
+        extras += ["vehicle_name", "model", "variant", "color", "stock_status"]
+    elif resource == "customers":
+        extras += ["customer_name", "mobile_no", "email", "customer_type", "total_purchases", "status"]
+    elif resource == "leads":
+        extras += ["lead_name", "mobile_no", "email", "vehicle_interest", "source", "status"]
+
+    merged = []
+    for field in base + extras:
+        if field not in merged:
+            merged.append(field)
+    return merged
+
+
+def _openai_gpt54mini_columns(resource: str) -> list[dict[str, str]]:
+    if resource == "sales":
+        columns = [
+            {"key": "sale_date", "label": "Sale Date"},
+            {"key": "company_name", "label": "Tenant"},
+            {"key": "customer_name", "label": "Customer"},
+            {"key": "model", "label": "Model"},
+            {"key": "variant", "label": "Variant"},
+            {"key": "final_price", "label": "Amount"},
+            {"key": "status", "label": "Status"},
+        ]
+    else:
+        columns = list(FINAL_RECORD_RESOURCES[resource]["columns"])
+        if _is_admin() and not any(column.get("key") == "company_name" for column in columns):
+            columns = [{"key": "company_name", "label": "Tenant"}] + columns
+
+    if not _is_admin():
+        columns = [column for column in columns if column.get("key") != "company_name"]
+
+    return columns
+
+
+def _openai_gpt54mini_enrich_row(row: dict[str, Any]) -> dict[str, Any]:
+    item = dict(row)
+    item["id"] = item.get("name")
+    if item.get("creation"):
+        item["created_at"] = str(item.get("creation"))
+        item["sale_date"] = str(item.get("creation"))[:10]
+    if item.get("company_id") and not item.get("company_name"):
+        item["company_name"] = _company_name_from_id(item.get("company_id"))
+    return item
+
+
+def _openai_gpt54mini_row_summary(resource: str, row: dict[str, Any]) -> str:
+    if resource == "sales":
+        sale_date = row.get("sale_date") or str(row.get("creation") or "")[:10] or "Unknown date"
+        customer = row.get("customer_name") or "Unknown customer"
+        model = row.get("model") or "Unknown model"
+        amount = row.get("final_price")
+        amount_text = f"₹{float(amount):,.0f}" if amount not in (None, "") else "amount not available"
+        status = row.get("status") or ""
+        status_text = f" — {status}" if status else ""
+        return f"{sale_date} — {customer} — {model} — {amount_text}{status_text}"
+
+    identity = _final_identity_field(resource)
+    name = _final_value(row, identity, "customer_name", "lead_name", "contact_name", "vehicle_name", "name") or "Unnamed"
+    created = str(row.get("creation") or "")[:10]
+    status = row.get("status") or row.get("payment_status") or row.get("stock_status")
+    parts = [str(name)]
+    if created:
+        parts.append(f"date: {created}")
+    if status:
+        parts.append(f"status: {status}")
+    return " — ".join(parts)
+
+
+def _openai_gpt54mini_count_query(query: str, resource: str, route: dict[str, Any] | None = None) -> bool:
+    q = query.lower()
+
+    if resource == "sales":
+        return _openai_gpt54mini_sales_count_query(query, route)
+
+    return _openai_gpt54mini_has_any(q, ["how many", "number of", "count of", "total number", "total count"])
+
+
+def _record_table_response(query: str, route: dict[str, Any] | None = None) -> dict[str, Any]:
+    route = route or {}
+    resource = _openai_gpt54mini_resource_from_query(query, route)
+
+    if not resource and route.get("resource") in FINAL_RECORD_RESOURCES:
+        resource = str(route["resource"])
+
+    if not resource and route.get("intent") == "record_lookup" and _final_contact_like_query(query, route):
+        resource = "customers"
+
+    if not resource or resource not in FINAL_RECORD_RESOURCES:
+        return _final_out_of_scope_response()
+
+    config = FINAL_RECORD_RESOURCES[resource]
+    doctype = config["doctype"]
+
+    base_filters, display_scope, company_id, company_name = _openai_gpt54mini_scope(query, route)
+    filters, time_text, _month_limit = _openai_gpt54mini_apply_period(base_filters, query, route)
+
+    if resource == "sales":
+        filters["status"] = ["!=", "Cancelled"]
+
+    fields = _existing_fields(doctype, _openai_gpt54mini_resource_fields(resource))
+
+    if _openai_gpt54mini_count_query(query, resource, route) and not _openai_gpt54mini_detail_or_date_query(query):
+        try:
+            count_value = frappe.db.count(doctype, filters) or 0
+        except Exception:
+            count_value = 0
+
+        if resource == "sales":
+            text = f"{display_scope} sold {count_value:,.0f} vehicle(s) over {time_text}."
+        else:
+            text = f"There are {count_value:,.0f} {config['title'].lower()} record(s) for {display_scope} over {time_text}."
+
+        return _base_response(
+            intent="record_lookup",
+            metric=f"{resource}_count",
+            time_range=time_text,
+            company_id=company_id,
+            company_name=company_name,
+            widgets_to_show=[],
+            text_response=text,
+            widget_payloads={},
+            other={"data_source": "database", "doctype": doctype, "answer_type": "record_count"},
+        )
+
+    rows = frappe.get_all(
+        doctype,
+        filters=filters,
+        fields=fields,
+        order_by="creation desc",
+        limit_page_length=500,
+    )
+
+    search_text = _final_extract_search_text(query, resource, route)
+    if search_text:
+        rows = _final_filter_rows(rows, config["search_fields"], search_text)
+
+    total_after_filter = len(rows)
+    context = route.get("_conversation_context") or ""
+    offset = _final_context_offset(query, context)
+    page_size = 10
+    page_rows = rows[offset:offset + page_size]
+
+    enriched_rows = [_openai_gpt54mini_enrich_row(row) for row in page_rows]
+    shown_to = min(offset + len(enriched_rows), total_after_filter)
+
+    detail_text = _final_record_detail_text(
+        resource=resource,
+        rows=enriched_rows,
+        query=query,
+        route=route,
+        search_text=search_text,
+        display_scope=display_scope,
+        total_after_filter=total_after_filter,
+    )
+
+    if detail_text:
+        message = detail_text
+    elif total_after_filter == 0:
+        if search_text:
+            message = f"No matching {config['title'].lower()} found for '{search_text}' in {display_scope} over {time_text}."
+        else:
+            message = f"No {config['title'].lower()} records found for {display_scope} over {time_text}."
+    elif _openai_gpt54mini_detail_or_date_query(query):
+        lines = [f"Here are the {config['title'].lower()} record(s) for {display_scope} over {time_text}. Showing {shown_to} of {total_after_filter}:"]
+        for idx, row in enumerate(enriched_rows[:5], start=1):
+            lines.append(f"{idx}. {_openai_gpt54mini_row_summary(resource, row)}")
+        message = "\n".join(lines)
+    elif search_text:
+        message = f"Here are the matching {config['title'].lower()} for '{search_text}' in {display_scope}. Showing {shown_to} of {total_after_filter} matched database record(s)."
+    elif offset:
+        message = f"Here are the remaining {config['title'].lower()} for {display_scope}. Showing {shown_to} of {total_after_filter} database record(s)."
+    else:
+        message = f"Here are the latest {config['title'].lower()} for {display_scope}. Showing {shown_to} of {total_after_filter} database record(s)."
+
+    return _base_response(
+        intent="record_lookup",
+        metric=resource,
+        time_range=time_text,
+        company_id=company_id,
+        company_name=company_name,
+        widgets_to_show=["record_table"],
+        text_response=message,
+        widget_payloads={
+            "record_table": {
+                "title": config["title"] if resource != "sales" else "Vehicle Sales",
+                "resource": resource,
+                "doctype": doctype,
+                "columns": _openai_gpt54mini_columns(resource),
+                "rows": enriched_rows,
+                "total": total_after_filter,
+                "shown": shown_to,
+                "offset": offset,
+                "search_text": search_text,
+                "requested_fields": _final_requested_fields(query, route, resource),
+                "data_source": "database",
+            }
+        },
+        other={
+            "data_source": "database",
+            "doctype": doctype,
+            "search_text": search_text,
+            "offset": offset,
+            "requested_fields": _final_requested_fields(query, route, resource),
+            "answer_type": "generic_record_lookup",
+        },
+    )
+
+
+def _build_sales_response(query: str, route: dict[str, Any] | None = None) -> dict[str, Any]:
+    route = route or {}
+    company_id, company_name = _resolve_company_scope(query, route)
+    display_name = company_name or "all allowed companies"
+
+    base_filters: dict[str, Any] = {"status": ["!=", "Cancelled"]}
+    if company_id:
+        base_filters["company_id"] = company_id
+
+    filters, time_text, month_limit = _openai_gpt54mini_apply_period(base_filters, query, route)
+
+    rows = frappe.get_all(
+        "DMS Vehicle Sale",
+        filters=filters,
+        fields=_existing_fields(
+            "DMS Vehicle Sale",
+            ["name", "company_id", "company_name", "customer_name", "model", "variant", "final_price", "status", "creation"],
+        ),
+        order_by="creation asc",
+    )
+
+    is_count = _openai_gpt54mini_sales_count_query(query, route)
+    chart_needed = _openai_gpt54mini_should_chart(query, route, month_limit)
+
+    if not rows:
+        return _no_data_response(
+            "sales_analysis",
+            "sales_count" if is_count else "sales",
+            time_text,
+            company_id,
+            company_name,
+            f"No vehicle sales data was found in the DMS database for {display_name} over {time_text}.",
+        )
+
+    if is_count:
+        summary = _openai_gpt54mini_monthly_summary(rows, "name", count_mode=True, month_limit=month_limit)
+        total_count = int(summary["total"])
+
+        if company_name:
+            text_response = f"{company_name} sold {total_count:,} vehicle(s) over {time_text}."
+        else:
+            text_response = f"Total vehicles sold for {display_name} over {time_text} were {total_count:,}."
+
+        widgets_to_show: list[str] = []
+        widget_payloads: dict[str, Any] = {}
+
+        if chart_needed:
+            widgets_to_show = ["generic_charts"]
+            widget_payloads["generic_charts"] = {
+                "title": "Vehicle Sales Count",
+                "scope": display_name,
+                "month_limit": month_limit or len(summary["labels"]),
+                "charts": [{
+                    "id": "vehicle_sales_count",
+                    "title": "Vehicle sales count",
+                    "description": f"Vehicle sales count for {display_name}",
+                    "type": "bar",
+                    "labels": summary["labels"],
+                    "series": summary["series"],
+                    "total": summary["total"],
+                    "prefix": "",
+                }],
+                "data_source": "database",
+            }
+
+        return _base_response(
+            intent="sales_analysis",
+            metric="sales_count",
+            time_range=time_text,
+            company_id=company_id,
+            company_name=company_name,
+            widgets_to_show=widgets_to_show,
+            text_response=text_response,
+            widget_payloads=widget_payloads,
+            other={"data_source": "database", "answer_type": "vehicle_sales_count"},
+        )
+
+    summary = _openai_gpt54mini_monthly_summary(rows, "final_price", count_mode=False, month_limit=month_limit)
+    highest = summary.get("highest_month")
+    highest_month = {"month": highest["month"], "sales": highest["final_price"]} if highest else None
+
+    text_response = f"Total sales for {display_name} over {time_text} were ₹{summary['total']:,.0f}."
+    if highest_month:
+        text_response += f" The highest month was {highest_month['month']} with ₹{highest_month['sales']:,.0f}."
+
+    widgets_to_show: list[str] = []
+    widget_payloads: dict[str, Any] = {}
+
+    if chart_needed:
+        widgets_to_show = ["sales_chart"]
+        widget_payloads["sales_chart"] = {
+            "labels": summary["labels"],
+            "series": summary["series"],
+            "total": summary["total"],
+            "highest_month": highest_month,
+        }
+
+    return _base_response(
+        intent="sales_analysis",
+        metric="sales",
+        time_range=time_text,
+        company_id=company_id,
+        company_name=company_name,
+        widgets_to_show=widgets_to_show,
+        text_response=text_response,
+        widget_payloads=widget_payloads,
+        other={"data_source": "database", "answer_type": "sales_revenue"},
+    )
+
+
+def _openai_gpt54mini_company_values(query: str, route: dict[str, Any] | None, metric: str) -> tuple[list[str], list[float], str]:
+    route = route or {}
+    time_filter, time_text, _month_limit = _openai_gpt54mini_time_filter(query, route)
+
+    companies = _openai_gpt54mini_route_companies(query, route)
+    if not companies:
+        companies = [row["company_name"] for row in frappe.get_all("DMS Company", fields=["company_name"], order_by="company_name asc")]
+
+    labels: list[str] = []
+    series: list[float] = []
+
+    for company in companies:
+        company_id = _company_id_from_name(company)
+        if not company_id:
+            continue
+
+        filters: dict[str, Any] = {"company_id": company_id, "status": ["!=", "Cancelled"]}
+        filters.update(time_filter)
+
+        if metric == "sales_count":
+            value = frappe.db.count("DMS Vehicle Sale", filters) or 0
+        else:
+            value = frappe.db.get_value("DMS Vehicle Sale", filters, "sum(final_price)") or 0
+
+        labels.append(company)
+        series.append(float(value))
+
+    return labels, series, time_text
+
+
+def _build_tenant_comparison_response(query: str, route: dict[str, Any] | None = None) -> dict[str, Any]:
+    route = route or {}
+
+    if not _is_admin():
+        company_id, company_name = _user_company_scope()
+        return _base_response(
+            intent="unauthorized",
+            metric=None,
+            time_range=None,
+            company_id=company_id,
+            company_name=company_name,
+            widgets_to_show=[],
+            text_response="You do not have permission to access cross-company comparison data.",
+            widget_payloads={},
+            other={"access_decision": "denied"},
+        )
+
+    is_count = _openai_gpt54mini_sales_count_query(query, route)
+    metric = "sales_count" if is_count else "sales_revenue"
+
+    labels, series, time_text = _openai_gpt54mini_company_values(query, route, metric)
+    chart_needed = _final_is_chart_query(query, route) or _final_is_comparison_query(query, route) or len(labels) > 1
+
+    if is_count:
+        parts = [f"{label}: {int(value):,} vehicle(s)" for label, value in zip(labels, series)]
+        text_response = f"Vehicle sales count over {time_text}: " + "; ".join(parts) + "."
+        response_metric = "sales_count"
+    else:
+        parts = [f"{label}: ₹{value:,.0f}" for label, value in zip(labels, series)]
+        text_response = f"Sales comparison over {time_text}: " + "; ".join(parts) + "."
+        response_metric = "sales"
+
+    widgets_to_show: list[str] = []
+    widget_payloads: dict[str, Any] = {}
+
+    if chart_needed:
+        widgets_to_show = ["tenant_comparison_chart"]
+        widget_payloads["tenant_comparison_chart"] = {
+            "labels": labels,
+            "series": series,
+        }
+
+    return _base_response(
+        intent="tenant_comparison",
+        metric=response_metric,
+        time_range=time_text,
+        company_id=None,
+        company_name=None,
+        widgets_to_show=widgets_to_show,
+        text_response=text_response,
+        widget_payloads=widget_payloads,
+        other={"data_source": "database", "answer_type": response_metric},
+    )
+
+
+def _final_llm_route(query: str) -> dict[str, Any]:
+    provider, _openai_key, _openai_model = _openai_gpt54mini_provider_config()
+
+    if provider == "openai":
+        return _openai_gpt54mini_route(query)
+
+    # Gemini remains available as fallback provider only if llm_provider is set back to gemini.
+    if not ENABLE_GEMINI_INTENT:
+        return {
+            "_llm_status": "disabled",
+            "_llm_error": "ENABLE_GEMINI_INTENT is false",
+        }
+
+    api_key = os.getenv("GEMINI_API_KEY") or frappe.conf.get("gemini_api_key") or frappe.conf.get("GEMINI_API_KEY")
+    if not api_key:
+        return {
+            "_llm_status": "missing_api_key",
+            "_llm_error": "GEMINI_API_KEY/gemini_api_key not found in environment or site config",
+        }
+
+    try:
+        from google import genai
+        from google.genai import types
+    except Exception as exc:
+        return {
+            "_llm_status": "import_failed",
+            "_llm_error": str(exc)[:500],
+        }
+
+    prompt = _openai_gpt54mini_planner_prompt(query)
+
+    schema = {
+        "type": "object",
+        "properties": {
+            "intent": {"type": "string"},
+            "resource": {"type": "string", "nullable": True},
+            "companies": {"type": "array", "items": {"type": "string"}},
+            "month_limit": {"type": "integer", "nullable": True},
+            "search_text": {"type": "string", "nullable": True},
+            "requested_fields": {"type": "array", "items": {"type": "string"}},
+            "pagination_action": {"type": "string", "nullable": True},
+            "wants_all_charts": {"type": "boolean"},
+            "confidence": {"type": "number"},
+        },
+        "required": ["intent"],
+    }
+
+    try:
+        client = genai.Client(api_key=api_key)
+        response = client.models.generate_content(
+            model=GEMINI_MODEL,
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+                response_schema=schema,
+            ),
+        )
+
+        parsed = _safe_json_loads(getattr(response, "text", None))
+        if not isinstance(parsed, dict):
+            return {
+                "_llm_status": "invalid_response",
+                "_llm_error": "Gemini returned non-dict response",
+            }
+
+        if parsed.get("intent") not in VALID_INTENTS:
+            return {
+                "_llm_status": "invalid_intent",
+                "_llm_error": f"Invalid intent from Gemini: {parsed.get('intent')}",
+                "_raw_route": parsed,
+            }
+
+        if not isinstance(parsed.get("companies"), list):
+            parsed["companies"] = []
+
+        if not isinstance(parsed.get("requested_fields"), list):
+            parsed["requested_fields"] = []
+
+        parsed["_llm_status"] = "ok"
+        parsed["_llm_error"] = None
+        parsed["_llm_provider"] = "gemini"
+        parsed["_llm_model"] = GEMINI_MODEL
+        return parsed
+
+    except Exception as exc:
+        return {
+            "_llm_status": "call_failed",
+            "_llm_error": str(exc)[:500],
+            "_llm_provider": "gemini",
+            "_llm_model": GEMINI_MODEL,
+        }
+
+# OPENAI_GPT54MINI_FULL_PATCH_END
+
+# OPENAI_INTELLIGENCE_V2_PATCH_START
+
+def _openai_intel_number_word(value: str | None) -> int | None:
+    if not value:
+        return None
+
+    value = str(value).strip().lower()
+    mapping = {
+        "one": 1,
+        "two": 2,
+        "couple": 2,
+        "three": 3,
+        "few": 3,
+        "four": 4,
+        "five": 5,
+        "six": 6,
+        "several": 6,
+        "seven": 7,
+        "eight": 8,
+        "nine": 9,
+        "ten": 10,
+        "eleven": 11,
+        "twelve": 12,
+    }
+
+    if value.isdigit():
+        return int(value)
+
+    return mapping.get(value)
+
+
+def _openai_intel_context_text(route: dict[str, Any] | None = None) -> str:
+    route = route or {}
+    context = (
+        route.get("_conversation_context")
+        or route.get("conversation_context")
+        or route.get("context")
+        or ""
+    )
+    return str(context or "")
+
+
+def _openai_intel_is_short_followup(query: str) -> bool:
+    q = query.lower().strip()
+    words = re.findall(r"[a-zA-Z0-9]+", q)
+
+    if len(words) <= 6 and any(term in q for term in [
+        "last", "past", "this", "previous", "month", "months",
+        "week", "weeks", "year", "years", "then", "that", "those",
+    ]):
+        return True
+
+    if q in {
+        "in last 3 months", "in last 3 months?", "last 3 months",
+        "last few months", "few months", "last month", "this month",
+        "what about last month", "what about this month",
+    }:
+        return True
+
+    return False
+
+
+def _openai_intel_effective_query(query: str, route: dict[str, Any] | None = None) -> str:
+    context = _openai_intel_context_text(route)
+    q = str(query or "").strip()
+
+    if not context:
+        return q
+
+    resource_words = [
+        "sale", "sales", "sold", "revenue", "lead", "leads", "customer",
+        "customers", "booking", "bookings", "test drive", "service",
+        "invoice", "vehicle", "inventory", "honda", "nexa", "jaguar",
+    ]
+
+    q_lower = q.lower()
+    has_resource = any(word in q_lower for word in resource_words)
+
+    if _openai_intel_is_short_followup(q) or not has_resource:
+        return context[-2500:] + "\nCurrent user follow-up: " + q
+
+    return q
+
+
+def _openai_intel_month_limit(query: str, route: dict[str, Any] | None = None) -> int | None:
+    current = str(query or "").lower()
+    effective = _openai_intel_effective_query(query, route).lower()
+
+    # Prioritize the current user message first.
+    for q in [current, effective]:
+        m = re.search(
+            r"(?:last|past|previous)\s+(\d+|one|two|couple|three|few|four|five|six|several|seven|eight|nine|ten|eleven|twelve)\s+months?",
+            q,
+        )
+        if m:
+            value = _openai_intel_number_word(m.group(1))
+            if value:
+                return value
+
+        if "last few months" in q or "past few months" in q or "recent few months" in q:
+            return 3
+
+        if "last couple months" in q or "past couple months" in q:
+            return 2
+
+        if "last several months" in q or "past several months" in q:
+            return 6
+
+    try:
+        return _final_month_limit(query, route)
+    except Exception:
+        return None
+
+
+def _openai_gpt54mini_time_filter(query: str, route: dict[str, Any] | None = None) -> tuple[dict[str, Any], str, int | None]:
+    from datetime import timedelta
+
+    current = str(query or "").lower().strip()
+    effective = _openai_intel_effective_query(query, route).lower().strip()
+    today = getdate(nowdate())
+    filters: dict[str, Any] = {}
+
+    # Current query has priority for date override.
+    for q in [current, effective]:
+        if "today" in q:
+            d = today.strftime("%Y-%m-%d")
+            filters["creation"] = ["between", [d, d]]
+            return filters, "today", None
+
+        if "yesterday" in q:
+            d = (today - timedelta(days=1)).strftime("%Y-%m-%d")
+            filters["creation"] = ["between", [d, d]]
+            return filters, "yesterday", None
+
+        if "last month" in q or "previous month" in q:
+            first_this_month = today.replace(day=1)
+            first_last_month = add_months(first_this_month, -1)
+            last_last_month = first_this_month - timedelta(days=1)
+            filters["creation"] = [
+                "between",
+                [first_last_month.strftime("%Y-%m-%d"), last_last_month.strftime("%Y-%m-%d")],
+            ]
+            return filters, "last month", 1
+
+        if "this month" in q or "current month" in q:
+            first_this_month = today.replace(day=1)
+            filters["creation"] = [
+                "between",
+                [first_this_month.strftime("%Y-%m-%d"), today.strftime("%Y-%m-%d")],
+            ]
+            return filters, "this month", 1
+
+        if "last week" in q or "past week" in q:
+            start = today - timedelta(days=7)
+            filters["creation"] = ["between", [start.strftime("%Y-%m-%d"), today.strftime("%Y-%m-%d")]]
+            return filters, "the last 7 days", None
+
+    month_limit = _openai_intel_month_limit(query, route)
+    if month_limit:
+        start, end = _month_window(month_limit)
+        if start and end:
+            filters["creation"] = ["between", [start, end]]
+        return filters, f"the last {month_limit} months", month_limit
+
+    return filters, "all available months", None
+
+
+def _openai_gpt54mini_resource_from_query(query: str, route: dict[str, Any] | None = None) -> str | None:
+    route = route or {}
+
+    if route.get("resource") in FINAL_RECORD_RESOURCES:
+        return str(route["resource"])
+
+    effective = _openai_intel_effective_query(query, route)
+    q = effective.lower()
+
+    if any(term in q for term in [
+        "sold", "sale", "sales", "vehicle sale", "cars sold",
+        "vehicles sold", "units sold", "delivery", "revenue", "income",
+    ]):
+        return "sales"
+
+    detected = _final_detect_record_resource(effective, route)
+    if detected:
+        return detected
+
+    return _final_detect_record_resource(query, route)
+
+
+def _openai_gpt54mini_route_companies(query: str, route: dict[str, Any] | None = None) -> list[str]:
+    route = route or {}
+    effective = _openai_intel_effective_query(query, route)
+    companies: list[str] = []
+
+    if isinstance(route.get("companies"), list):
+        for company in route["companies"]:
+            resolved = _company_name_from_alias(str(company))
+            if resolved and resolved not in companies:
+                companies.append(resolved)
+
+    for company in _final_company_mentions(effective):
+        if company and company not in companies:
+            companies.append(company)
+
+    order = {"Honda": 0, "NEXA": 1, "Jaguar": 2}
+    companies.sort(key=lambda name: order.get(name, 99))
+    return companies
+
+
+def _openai_gpt54mini_sales_count_query(query: str, route: dict[str, Any] | None = None) -> bool:
+    route = route or {}
+    effective = _openai_intel_effective_query(query, route).lower().strip()
+    current = str(query or "").lower().strip()
+
+    combined = effective
+
+    if any(term in combined for term in [
+        "phone number", "contact number", "mobile number", "email of", "mail of"
+    ]):
+        return False
+
+    if any(term in combined for term in [
+        "revenue", "income", "sales amount", "sale amount", "sales value",
+        "total sales amount", "how much revenue", "how much sales amount",
+    ]):
+        return False
+
+    requested_fields = route.get("requested_fields")
+    if isinstance(requested_fields, list):
+        joined = " ".join(str(field).lower() for field in requested_fields)
+        if "count" in joined:
+            return True
+
+    # In this DMS demo, plain "sales" around vehicles means unit count unless revenue/amount is explicit.
+    sales_words = [
+        "sold", "cars sold", "vehicles sold", "units sold", "sold cars",
+        "sold vehicles", "sales for", "sale count", "sales count",
+        "number of sales", "how many sales", "number of honda", "number of nexa",
+        "number of jaguar",
+    ]
+
+    count_words = ["how many", "number of", "count of", "total number", "count"]
+
+    if any(term in combined for term in count_words) and any(term in combined for term in [
+        "sale", "sales", "sold", "vehicle", "vehicles", "car", "cars", "honda", "nexa", "jaguar"
+    ]):
+        return True
+
+    if any(term in combined for term in sales_words):
+        return True
+
+    # Short follow-up like "in last 3 months?" after a sales-count question.
+    if _openai_intel_is_short_followup(current) and any(term in combined for term in ["sales", "sold", "vehicles sold", "cars sold"]):
+        return True
+
+    return False
+
+
+def _openai_gpt54mini_revenue_query(query: str) -> bool:
+    q = str(query or "").lower()
+    return any(term in q for term in [
+        "revenue", "income", "sales amount", "sale amount", "sales value",
+        "total sales amount", "how much revenue", "how much sales amount",
+    ])
+
+
+def _openai_gpt54mini_detail_or_date_query(query: str) -> bool:
+    q = str(query or "").lower()
+    return any(term in q for term in [
+        "date", "dates", "when", "which date", "sale date", "sold date",
+        "details", "detail", "list", "records", "record", "show", "latest",
+        "who", "which customer", "customer name", "invoice", "status",
+    ])
+
+
+def _openai_gpt54mini_should_chart(query: str, route: dict[str, Any] | None = None, month_limit: int | None = None) -> bool:
+    effective = _openai_intel_effective_query(query, route).lower()
+    current = str(query or "").lower()
+
+    if _final_is_chart_query(query, route) or _final_is_chart_query(effective, route):
+        return True
+
+    if month_limit and month_limit >= 2:
+        return True
+
+    if re.search(r"last\s+\d+\s+months?", current) or re.search(r"last\s+\d+\s+months?", effective):
+        return True
+
+    if any(term in effective for term in [
+        "monthly", "month wise", "month-wise", "trend", "over time",
+        "last few months", "past few months", "last several months",
+    ]):
+        return True
+
+    return False
+
+
+def _openai_gpt54mini_normalized_intent(query: str, route: dict[str, Any] | None, current_intent: str) -> str | None:
+    route = route or {}
+    effective = _openai_intel_effective_query(query, route)
+    q = effective.lower().strip()
+
+    if _final_is_chart_query(effective, route) and any(term in q for term in [
+        "all chart", "all charts", "available chart", "available charts", "widgets", "dashboard"
+    ]):
+        return "dashboard_charts"
+
+    resource = _openai_gpt54mini_resource_from_query(query, route)
+    companies = _openai_gpt54mini_route_companies(query, route)
+
+    if resource == "sales":
+        if len(companies) > 1 or _final_is_comparison_query(effective, route):
+            return "tenant_comparison"
+
+        if _openai_gpt54mini_detail_or_date_query(query):
+            return "record_lookup"
+
+        return "sales_analysis"
+
+    if resource:
+        return "record_lookup"
+
+    # Recover short follow-ups instead of out_of_scope.
+    if _openai_intel_is_short_followup(query):
+        if any(term in q for term in ["sale", "sales", "sold", "vehicle", "vehicles", "car", "cars"]):
+            return "sales_analysis"
+
+    if current_intent in VALID_INTENTS:
+        return current_intent
+
+    return None
+
+
+def _openai_gpt54mini_apply_period(filters: dict[str, Any], query: str, route: dict[str, Any] | None = None) -> tuple[dict[str, Any], str, int | None]:
+    time_filter, time_text, month_limit = _openai_gpt54mini_time_filter(query, route)
+    final_filters = dict(filters)
+    final_filters.update(time_filter)
+    return final_filters, time_text, month_limit
+
+
+def _openai_intel_scope(query: str, route: dict[str, Any] | None = None) -> tuple[str | None, str | None, str]:
+    route = route or {}
+    effective = _openai_intel_effective_query(query, route)
+
+    company_id, company_name = _resolve_company_scope(effective, route)
+
+    if company_name:
+        return company_id, company_name, company_name
+
+    return company_id, company_name, "all allowed companies"
+
+
+def _build_sales_response(query: str, route: dict[str, Any] | None = None) -> dict[str, Any]:
+    route = route or {}
+    effective = _openai_intel_effective_query(query, route)
+    company_id, company_name, display_name = _openai_intel_scope(query, route)
+
+    base_filters: dict[str, Any] = {"status": ["!=", "Cancelled"]}
+    if company_id:
+        base_filters["company_id"] = company_id
+
+    filters, time_text, month_limit = _openai_gpt54mini_apply_period(base_filters, query, route)
+
+    rows = frappe.get_all(
+        "DMS Vehicle Sale",
+        filters=filters,
+        fields=_existing_fields(
+            "DMS Vehicle Sale",
+            ["name", "company_id", "company_name", "customer_name", "model", "variant", "final_price", "status", "creation"],
+        ),
+        order_by="creation asc",
+    )
+
+    is_count = _openai_gpt54mini_sales_count_query(effective, route)
+    chart_needed = _openai_gpt54mini_should_chart(query, route, month_limit)
+
+    if not rows:
+        return _no_data_response(
+            "sales_analysis",
+            "sales_count" if is_count else "sales",
+            time_text,
+            company_id,
+            company_name,
+            f"No vehicle sales data was found in the DMS database for {display_name} over {time_text}.",
+        )
+
+    if is_count:
+        summary = _openai_gpt54mini_monthly_summary(rows, "name", count_mode=True, month_limit=month_limit)
+        total_count = int(summary["total"])
+
+        text_response = f"{display_name} sold {total_count:,} vehicle(s) over {time_text}."
+
+        widgets_to_show: list[str] = []
+        widget_payloads: dict[str, Any] = {}
+
+        if chart_needed:
+            widgets_to_show = ["generic_charts"]
+            widget_payloads["generic_charts"] = {
+                "title": "Vehicle Sales Count",
+                "scope": display_name,
+                "month_limit": month_limit or len(summary["labels"]),
+                "charts": [{
+                    "id": "vehicle_sales_count",
+                    "title": "Vehicle sales count",
+                    "description": f"Vehicle sales count for {display_name}",
+                    "type": "bar",
+                    "labels": summary["labels"],
+                    "series": summary["series"],
+                    "total": summary["total"],
+                    "prefix": "",
+                }],
+                "data_source": "database",
+            }
+
+        return _base_response(
+            intent="sales_analysis",
+            metric="sales_count",
+            time_range=time_text,
+            company_id=company_id,
+            company_name=company_name,
+            widgets_to_show=widgets_to_show,
+            text_response=text_response,
+            widget_payloads=widget_payloads,
+            other={"data_source": "database", "answer_type": "vehicle_sales_count"},
+        )
+
+    summary = _openai_gpt54mini_monthly_summary(rows, "final_price", count_mode=False, month_limit=month_limit)
+    highest = summary.get("highest_month")
+    highest_month = {"month": highest["month"], "sales": highest["final_price"]} if highest else None
+
+    text_response = f"Total sales revenue for {display_name} over {time_text} was ₹{summary['total']:,.0f}."
+    if highest_month:
+        text_response += f" The highest month was {highest_month['month']} with ₹{highest_month['sales']:,.0f}."
+
+    widgets_to_show: list[str] = []
+    widget_payloads: dict[str, Any] = {}
+
+    if chart_needed:
+        widgets_to_show = ["sales_chart"]
+        widget_payloads["sales_chart"] = {
+            "labels": summary["labels"],
+            "series": summary["series"],
+            "total": summary["total"],
+            "highest_month": highest_month,
+        }
+
+    return _base_response(
+        intent="sales_analysis",
+        metric="sales",
+        time_range=time_text,
+        company_id=company_id,
+        company_name=company_name,
+        widgets_to_show=widgets_to_show,
+        text_response=text_response,
+        widget_payloads=widget_payloads,
+        other={"data_source": "database", "answer_type": "sales_revenue"},
+    )
+
+
+def _openai_gpt54mini_company_values(query: str, route: dict[str, Any] | None, metric: str) -> tuple[list[str], list[float], str]:
+    route = route or {}
+    effective = _openai_intel_effective_query(query, route)
+    time_filter, time_text, _month_limit = _openai_gpt54mini_time_filter(query, route)
+
+    companies = _openai_gpt54mini_route_companies(effective, route)
+    if not companies:
+        companies = [row["company_name"] for row in frappe.get_all("DMS Company", fields=["company_name"], order_by="company_name asc")]
+
+    labels: list[str] = []
+    series: list[float] = []
+
+    for company in companies:
+        company_id = _company_id_from_name(company)
+        if not company_id:
+            continue
+
+        filters: dict[str, Any] = {"company_id": company_id, "status": ["!=", "Cancelled"]}
+        filters.update(time_filter)
+
+        if metric == "sales_count":
+            value = frappe.db.count("DMS Vehicle Sale", filters) or 0
+        else:
+            value = frappe.db.get_value("DMS Vehicle Sale", filters, "sum(final_price)") or 0
+
+        labels.append(company)
+        series.append(float(value))
+
+    return labels, series, time_text
+
+
+def _build_tenant_comparison_response(query: str, route: dict[str, Any] | None = None) -> dict[str, Any]:
+    route = route or {}
+    effective = _openai_intel_effective_query(query, route)
+
+    if not _is_admin():
+        company_id, company_name = _user_company_scope()
+        return _base_response(
+            intent="unauthorized",
+            metric=None,
+            time_range=None,
+            company_id=company_id,
+            company_name=company_name,
+            widgets_to_show=[],
+            text_response="You do not have permission to access cross-company comparison data.",
+            widget_payloads={},
+            other={"access_decision": "denied"},
+        )
+
+    is_count = _openai_gpt54mini_sales_count_query(effective, route)
+    metric = "sales_count" if is_count else "sales_revenue"
+
+    labels, series, time_text = _openai_gpt54mini_company_values(query, route, metric)
+
+    if is_count:
+        parts = [f"{label}: {int(value):,} vehicle(s)" for label, value in zip(labels, series)]
+        text_response = f"Vehicle sales count over {time_text}: " + "; ".join(parts) + "."
+        response_metric = "sales_count"
+
+        widgets_to_show = ["generic_charts"] if labels else []
+        widget_payloads = {
+            "generic_charts": {
+                "title": "Vehicle Sales Count Comparison",
+                "scope": "selected tenants",
+                "month_limit": _openai_intel_month_limit(query, route),
+                "charts": [{
+                    "id": "tenant_vehicle_sales_count",
+                    "title": "Vehicle sales count by tenant",
+                    "description": f"Vehicle sales count over {time_text}",
+                    "type": "bar",
+                    "labels": labels,
+                    "series": series,
+                    "total": sum(series),
+                    "prefix": "",
+                }],
+                "data_source": "database",
+            }
+        } if labels else {}
+
+    else:
+        parts = [f"{label}: ₹{value:,.0f}" for label, value in zip(labels, series)]
+        text_response = f"Sales revenue comparison over {time_text}: " + "; ".join(parts) + "."
+        response_metric = "sales"
+
+        widgets_to_show = ["tenant_comparison_chart"] if labels else []
+        widget_payloads = {
+            "tenant_comparison_chart": {
+                "labels": labels,
+                "series": series,
+            }
+        } if labels else {}
+
+    return _base_response(
+        intent="tenant_comparison",
+        metric=response_metric,
+        time_range=time_text,
+        company_id=None,
+        company_name=None,
+        widgets_to_show=widgets_to_show,
+        text_response=text_response,
+        widget_payloads=widget_payloads,
+        other={"data_source": "database", "answer_type": response_metric},
+    )
+
+# OPENAI_INTELLIGENCE_V2_PATCH_END
+
+# OPENAI_DATA_AGENT_PATCH_START
+
+OPENAI_DATA_AGENT_MAX_ROWS_PER_RESOURCE = int(os.getenv("OPENAI_DATA_AGENT_MAX_ROWS_PER_RESOURCE", "1000"))
+
+
+def _data_agent_provider_config() -> tuple[str, str | None, str]:
+    if "_openai_gpt54mini_provider_config" in globals():
+        return _openai_gpt54mini_provider_config()
+
+    provider = (
+        os.getenv("LLM_PROVIDER")
+        or frappe.conf.get("llm_provider")
+        or frappe.conf.get("LLM_PROVIDER")
+        or "gemini"
+    )
+    provider = str(provider).strip().lower()
+
+    api_key = (
+        os.getenv("OPENAI_API_KEY")
+        or frappe.conf.get("openai_api_key")
+        or frappe.conf.get("OPENAI_API_KEY")
+    )
+
+    model = (
+        os.getenv("OPENAI_MODEL")
+        or frappe.conf.get("openai_model")
+        or frappe.conf.get("OPENAI_MODEL")
+        or "gpt-5.4-mini"
+    )
+
+    return provider, api_key, str(model).strip() or "gpt-5.4-mini"
+
+
+def _data_agent_catalog() -> dict[str, dict[str, str]]:
+    return {
+        "leads": {"doctype": "DMS Lead", "title": "Leads"},
+        "customers": {"doctype": "DMS Customer", "title": "Customers"},
+        "sales": {"doctype": "DMS Vehicle Sale", "title": "Vehicle Sales"},
+        "bookings": {"doctype": "DMS Booking", "title": "Bookings"},
+        "test_drives": {"doctype": "DMS Test Drive", "title": "Test Drives"},
+        "service_jobs": {"doctype": "DMS Service Job", "title": "Service Jobs"},
+        "invoices": {"doctype": "DMS Invoice", "title": "Invoices"},
+        "vehicles": {"doctype": "DMS Vehicle", "title": "Vehicles / Inventory"},
+    }
+
+
+def _data_agent_clean_value(value: Any) -> Any:
+    if value is None:
+        return None
+
+    try:
+        from decimal import Decimal
+        if isinstance(value, Decimal):
+            return float(value)
+    except Exception:
+        pass
+
+    if hasattr(value, "isoformat"):
+        try:
+            return value.isoformat()
+        except Exception:
+            return str(value)
+
+    if isinstance(value, (str, int, float, bool)):
+        return value
+
+    return str(value)
+
+
+def _data_agent_has_field(doctype: str, fieldname: str) -> bool:
+    try:
+        if fieldname in {"name", "creation", "modified", "owner"}:
+            return True
+        return bool(frappe.get_meta(doctype).has_field(fieldname))
+    except Exception:
+        return False
+
+
+def _data_agent_allowed_fields(doctype: str) -> list[str]:
+    allowed = ["name", "creation", "modified", "owner"]
+
+    fieldtypes = {
+        "Data", "Link", "Dynamic Link", "Select", "Date", "Datetime",
+        "Currency", "Int", "Float", "Percent", "Check", "Text",
+        "Small Text", "Long Text", "Phone", "Email", "Read Only",
+    }
+
+    try:
+        meta = frappe.get_meta(doctype)
+        for df in meta.fields:
+            if not df.fieldname:
+                continue
+            if df.fieldtype not in fieldtypes:
+                continue
+            if df.fieldname not in allowed:
+                allowed.append(df.fieldname)
+    except Exception:
+        pass
+
+    # Ensure common fields are included if present.
+    common = [
+        "company_id", "company_name",
+        "customer_name", "lead_name", "contact_name",
+        "mobile_no", "phone", "email",
+        "vehicle_name", "model", "variant", "color", "stock_status",
+        "status", "payment_status",
+        "final_price", "total_amount", "booking_amount",
+        "invoice_no", "invoice_type", "due_date",
+        "booking_date", "expected_delivery",
+        "scheduled_date", "scheduled_time",
+        "service_type", "vehicle_reg_no",
+        "source", "vehicle_interest",
+    ]
+
+    for field in common:
+        if field not in allowed and _data_agent_has_field(doctype, field):
+            allowed.append(field)
+
+    return allowed
+
+
+def _data_agent_company_name(company_id: str | None) -> str | None:
+    if not company_id:
+        return None
+
+    try:
+        return _company_name_from_id(company_id)
+    except Exception:
+        try:
+            return frappe.db.get_value("DMS Company", company_id, "company_name")
+        except Exception:
+            return None
+
+
+def _data_agent_current_scope() -> tuple[bool, str | None, str | None]:
+    try:
+        if _is_admin():
+            return True, None, None
+    except Exception:
+        pass
+
+    try:
+        company_id, company_name = _user_company_scope()
+        return False, company_id, company_name
+    except Exception:
+        return False, None, None
+
+
+def _data_agent_company_mentions(query_text: str) -> list[str]:
+    try:
+        mentions = _final_company_mentions(query_text)
+        return [m for m in mentions if m]
+    except Exception:
+        q = str(query_text or "").lower()
+        found = []
+        if "honda" in q:
+            found.append("Honda")
+        if "nexa" in q:
+            found.append("NEXA")
+        if "jaguar" in q:
+            found.append("Jaguar")
+        return found
+
+
+def _data_agent_cross_tenant_denial(query_text: str) -> dict[str, Any] | None:
+    is_admin, company_id, company_name = _data_agent_current_scope()
+
+    if is_admin:
+        return None
+
+    company_name = company_name or "your tenant"
+    q = str(query_text or "").lower()
+
+    if any(term in q for term in ["all companies", "all tenants", "other companies", "other tenants", "cross tenant", "cross-company"]):
+        return _base_response(
+            intent="unauthorized",
+            metric=None,
+            time_range=None,
+            company_id=company_id,
+            company_name=company_name,
+            widgets_to_show=[],
+            text_response=f"You only have access to {company_name} information.",
+            widget_payloads={},
+            other={"access_decision": "denied", "reason": "cross_tenant_request"},
+        )
+
+    mentions = _data_agent_company_mentions(query_text)
+    for mentioned in mentions:
+        if company_name and mentioned.lower() != company_name.lower():
+            return _base_response(
+                intent="unauthorized",
+                metric=None,
+                time_range=None,
+                company_id=company_id,
+                company_name=company_name,
+                widgets_to_show=[],
+                text_response=f"You only have access to {company_name} information.",
+                widget_payloads={},
+                other={"access_decision": "denied", "reason": "cross_tenant_request"},
+            )
+
+    return None
+
+
+def _data_agent_filters_for_doctype(doctype: str) -> dict[str, Any] | None:
+    is_admin, company_id, _company_name = _data_agent_current_scope()
+
+    if is_admin:
+        return {}
+
+    # Tenant users must never receive cross-tenant rows.
+    if company_id and _data_agent_has_field(doctype, "company_id"):
+        return {"company_id": company_id}
+
+    # If a tenant-scoped doctype cannot be filtered by company_id, skip it.
+    return None
+
+
+def _data_agent_fetch_rows(resource: str, doctype: str) -> list[dict[str, Any]]:
+    fields = _data_agent_allowed_fields(doctype)
+    filters = _data_agent_filters_for_doctype(doctype)
+
+    if filters is None:
+        return []
+
+    try:
+        rows = frappe.get_all(
+            doctype,
+            filters=filters,
+            fields=fields,
+            order_by="creation desc",
+            limit_page_length=OPENAI_DATA_AGENT_MAX_ROWS_PER_RESOURCE,
+        )
+    except Exception:
+        rows = []
+
+    cleaned: list[dict[str, Any]] = []
+
+    for row in rows:
+        item = {}
+        for key, value in dict(row).items():
+            item[key] = _data_agent_clean_value(value)
+
+        if item.get("company_id") and not item.get("company_name"):
+            item["company_name"] = _data_agent_company_name(item.get("company_id"))
+
+        item["_resource"] = resource
+        item["_doctype"] = doctype
+        cleaned.append(item)
+
+    return cleaned
+
+
+def _data_agent_build_pack() -> dict[str, Any]:
+    is_admin, company_id, company_name = _data_agent_current_scope()
+    catalog = _data_agent_catalog()
+
+    resources: dict[str, Any] = {}
+
+    for resource, meta in catalog.items():
+        doctype = meta["doctype"]
+        fields = _data_agent_allowed_fields(doctype)
+        rows = _data_agent_fetch_rows(resource, doctype)
+
+        resources[resource] = {
+            "doctype": doctype,
+            "title": meta["title"],
+            "fields": fields,
+            "row_count": len(rows),
+            "rows": rows,
+        }
+
+    return {
+        "scope": {
+            "is_admin": is_admin,
+            "company_id": company_id,
+            "company_name": company_name,
+            "access_note": "Admin can see all companies." if is_admin else f"Tenant user can see only {company_name}.",
+        },
+        "resources": resources,
+        "widget_policy": {
+            "record_table": "Use for lists, records, search results, detail rows, contact lookup, invoices, vehicles, customers, leads, bookings, test drives, service jobs.",
+            "generic_charts": "Use for count trends, revenue trends, comparisons, month-wise summaries, status breakdowns, and all chart requests.",
+            "no_widget": "Use for simple direct answers like a single phone number, email, date, or one KPI where a chart/table adds no value.",
+        },
+    }
+
+
+def _data_agent_output_schema() -> dict[str, Any]:
+    resource_enum = list(_data_agent_catalog().keys())
+
+    widget_schema = {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "widget_type": {
+                "type": "string",
+                "enum": ["none", "record_table", "generic_charts"],
+            },
+            "title": {"type": "string"},
+            "resource": {
+                "anyOf": [
+                    {"type": "string", "enum": resource_enum},
+                    {"type": "null"},
+                ]
+            },
+            "record_names": {
+                "type": "array",
+                "items": {"type": "string"},
+            },
+            "fields": {
+                "type": "array",
+                "items": {"type": "string"},
+            },
+            "chart_type": {
+                "type": "string",
+                "enum": ["bar", "line", "pie", "none"],
+            },
+            "group_by": {
+                "type": "string",
+                "enum": ["month", "company", "field", "status", "none"],
+            },
+            "group_field": {
+                "anyOf": [{"type": "string"}, {"type": "null"}]
+            },
+            "aggregation": {
+                "type": "string",
+                "enum": ["count", "sum", "none"],
+            },
+            "value_field": {
+                "anyOf": [{"type": "string"}, {"type": "null"}]
+            },
+            "prefix": {"type": "string"},
+            "suffix": {"type": "string"},
+        },
+        "required": [
+            "widget_type",
+            "title",
+            "resource",
+            "record_names",
+            "fields",
+            "chart_type",
+            "group_by",
+            "group_field",
+            "aggregation",
+            "value_field",
+            "prefix",
+            "suffix",
+        ],
+    }
+
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "intent": {
+                "type": "string",
+                "enum": [
+                    "record_lookup",
+                    "dashboard_charts",
+                    "tenant_comparison",
+                    "sales_analysis",
+                    "service_analysis",
+                    "inventory_analysis",
+                    "knowledge_lookup",
+                    "out_of_scope",
+                ],
+            },
+            "answer": {"type": "string"},
+            "metric": {
+                "anyOf": [{"type": "string"}, {"type": "null"}]
+            },
+            "time_range": {
+                "anyOf": [{"type": "string"}, {"type": "null"}]
+            },
+            "company_name": {
+                "anyOf": [{"type": "string"}, {"type": "null"}]
+            },
+            "widgets": {
+                "type": "array",
+                "items": widget_schema,
+            },
+            "confidence": {"type": "number"},
+        },
+        "required": [
+            "intent",
+            "answer",
+            "metric",
+            "time_range",
+            "company_name",
+            "widgets",
+            "confidence",
+        ],
+    }
+
+
+def _data_agent_prompt(user_query: str, conversation_context: str | None, data_pack: dict[str, Any]) -> str:
+    compact_pack = json.dumps(data_pack, ensure_ascii=False, default=str)
+
+    return f"""
+You are Vividity, a GPT data agent for a Dealer Management System.
+
+You are given:
+1. The user's question.
+2. Conversation context.
+3. A JSON data pack containing only database rows the current user is authorised to see.
+
+Answer strictly from the data pack. Do not invent values.
+If the exact answer is not present in the data pack, say that the matching data was not found.
+
+Security rules:
+- The data pack is already tenant-scoped by the backend.
+- Never claim access to data not present in the data pack.
+- If a tenant-scoped data pack contains only one company, answer only from that company.
+
+Data reasoning rules:
+- You may inspect all resources and all fields in the data pack.
+- For customer join date, created date, or onboarding date, use a dedicated field if present; otherwise use "creation".
+- For phone/contact/email questions, search customers first, then leads.
+- For inventory stock questions, inspect vehicles and stock_status/status fields.
+- For sales/sold vehicle questions, inspect vehicle sales.
+- "sales", "number of sales", "cars sold", and "vehicles sold" normally mean vehicle sale count unless the user explicitly asks revenue/amount/income.
+- Revenue/amount questions should use fields like final_price, total_amount, booking_amount when relevant.
+- Time filtering must use date/datetime fields such as creation, booking_date, scheduled_date, due_date, expected_delivery where relevant.
+- For vague follow-ups, use the conversation context.
+
+Widget rules:
+- Do not show a widget for a single direct answer such as one phone number, one email, one date, or one simple sentence.
+- Use record_table for lists, details, search results, inventory rows, invoice rows, customer rows, lead rows, booking rows, service rows, or sales records.
+- Use generic_charts for trends, comparisons, month-wise summaries, status breakdowns, sales over time, revenue over time, or "show chart/all charts" questions.
+- Multiple charts are allowed by returning multiple generic_charts widget specs.
+- Only return widgets that are useful for the answer.
+- For each widget, include record_names from the rows used when possible.
+- For record_table widgets, include the fields that should be displayed.
+- For chart widgets:
+  - aggregation=count for counts.
+  - aggregation=sum for revenue/amount totals.
+  - group_by=month for month-wise/time trend.
+  - group_by=company for tenant/company comparisons.
+  - group_by=status or field for breakdowns.
+  - prefix="₹" for money charts, otherwise prefix="".
+
+User question:
+{user_query}
+
+Conversation context:
+{conversation_context or ""}
+
+Authorised DMS data pack:
+{compact_pack}
+""".strip()
+
+
+def _data_agent_extract_openai_text(response_json: dict[str, Any]) -> str | None:
+    if isinstance(response_json.get("output_text"), str):
+        return response_json["output_text"]
+
+    pieces: list[str] = []
+    for item in response_json.get("output") or []:
+        for content in item.get("content") or []:
+            if isinstance(content.get("text"), str):
+                pieces.append(content["text"])
+
+    if pieces:
+        return "\n".join(pieces)
+
+    return None
+
+
+def _data_agent_call_openai(user_query: str, conversation_context: str | None, data_pack: dict[str, Any]) -> dict[str, Any]:
+    _provider, api_key, model = _data_agent_provider_config()
+
+    if not api_key:
+        return {
+            "_llm_status": "missing_api_key",
+            "_llm_error": "openai_api_key/OPENAI_API_KEY not found in environment or site config",
+            "_llm_provider": "openai",
+            "_llm_model": model,
+        }
+
+    payload = {
+        "model": model,
+        "input": _data_agent_prompt(user_query, conversation_context, data_pack),
+        "text": {
+            "format": {
+                "type": "json_schema",
+                "name": "dms_data_agent_answer",
+                "strict": True,
+                "schema": _data_agent_output_schema(),
+            }
+        },
+        "store": False,
+    }
+
+    try:
+        import urllib.request
+
+        req = urllib.request.Request(
+            "https://api.openai.com/v1/responses",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {api_key}",
+            },
+            method="POST",
+        )
+
+        with urllib.request.urlopen(req, timeout=120) as res:
+            raw = res.read().decode("utf-8")
+            response_json = json.loads(raw)
+
+        output_text = _data_agent_extract_openai_text(response_json)
+        parsed = _safe_json_loads(output_text)
+
+        if not isinstance(parsed, dict):
+            return {
+                "_llm_status": "invalid_response",
+                "_llm_error": "OpenAI returned empty or non-dict JSON",
+                "_llm_provider": "openai",
+                "_llm_model": model,
+            }
+
+        parsed["_llm_status"] = "ok"
+        parsed["_llm_error"] = None
+        parsed["_llm_provider"] = "openai"
+        parsed["_llm_model"] = model
+        return parsed
+
+    except Exception as exc:
+        return {
+            "_llm_status": "call_failed",
+            "_llm_error": str(exc)[:1000],
+            "_llm_provider": "openai",
+            "_llm_model": model,
+        }
+
+
+def _data_agent_rows_for_resource(data_pack: dict[str, Any], resource: str | None) -> list[dict[str, Any]]:
+    if not resource:
+        return []
+
+    try:
+        return list(data_pack["resources"][resource]["rows"])
+    except Exception:
+        return []
+
+
+def _data_agent_filter_by_names(rows: list[dict[str, Any]], names: list[str] | None) -> list[dict[str, Any]]:
+    if not names:
+        return rows
+
+    wanted = {str(name) for name in names if name}
+    if not wanted:
+        return rows
+
+    filtered = [row for row in rows if str(row.get("name")) in wanted]
+
+    return filtered if filtered else rows
+
+
+def _data_agent_field_label(fieldname: str) -> str:
+    if not fieldname:
+        return ""
+    return fieldname.replace("_", " ").strip().title()
+
+
+def _data_agent_table_payload(widget: dict[str, Any], data_pack: dict[str, Any]) -> dict[str, Any] | None:
+    resource = widget.get("resource")
+    if not resource:
+        return None
+
+    resources = data_pack.get("resources") or {}
+    resource_info = resources.get(resource) or {}
+    rows = _data_agent_rows_for_resource(data_pack, resource)
+    rows = _data_agent_filter_by_names(rows, widget.get("record_names") or [])
+
+    fields = [field for field in (widget.get("fields") or []) if isinstance(field, str) and field]
+
+    if not fields:
+        fields = list((resource_info.get("fields") or [])[:8])
+
+    # Keep tenant visible for admin if available.
+    is_admin = (data_pack.get("scope") or {}).get("is_admin")
+    if is_admin and "company_name" not in fields:
+        fields = ["company_name"] + fields
+
+    fields = [field for field in fields if field in (resource_info.get("fields") or []) or field in {"company_name", "_resource", "_doctype"}]
+    fields = fields[:10]
+
+    table_rows: list[dict[str, Any]] = []
+    for row in rows[:10]:
+        item = {"id": row.get("name")}
+        for field in fields:
+            item[field] = row.get(field)
+        table_rows.append(item)
+
+    columns = [{"key": field, "label": _data_agent_field_label(field)} for field in fields]
+
+    return {
+        "title": widget.get("title") or resource_info.get("title") or "Records",
+        "resource": resource,
+        "doctype": resource_info.get("doctype"),
+        "columns": columns,
+        "rows": table_rows,
+        "total": len(rows),
+        "shown": len(table_rows),
+        "offset": 0,
+        "search_text": None,
+        "requested_fields": fields,
+        "data_source": "database",
+    }
+
+
+def _data_agent_group_label(row: dict[str, Any], widget: dict[str, Any]) -> str:
+    group_by = widget.get("group_by")
+    group_field = widget.get("group_field")
+
+    if group_by == "month":
+        for field in [group_field, "creation", "booking_date", "scheduled_date", "due_date", "expected_delivery"]:
+            if field and row.get(field):
+                return str(row.get(field))[:7]
+        return "Unknown"
+
+    if group_by == "company":
+        return str(row.get("company_name") or _data_agent_company_name(row.get("company_id")) or "Unknown")
+
+    if group_by == "status":
+        return str(row.get("status") or row.get("payment_status") or row.get("stock_status") or "Unknown")
+
+    if group_by == "field" and group_field:
+        return str(row.get(group_field) or "Unknown")
+
+    return "Total"
+
+
+def _data_agent_numeric_value(row: dict[str, Any], fieldname: str | None) -> float:
+    if not fieldname:
+        return 0.0
+
+    value = row.get(fieldname)
+
+    try:
+        return float(value or 0)
+    except Exception:
+        return 0.0
+
+
+def _data_agent_chart_from_widget(widget: dict[str, Any], data_pack: dict[str, Any]) -> dict[str, Any] | None:
+    resource = widget.get("resource")
+    if not resource:
+        return None
+
+    rows = _data_agent_rows_for_resource(data_pack, resource)
+    rows = _data_agent_filter_by_names(rows, widget.get("record_names") or [])
+
+    aggregation = widget.get("aggregation") or "count"
+    value_field = widget.get("value_field")
+
+    totals: dict[str, float] = {}
+
+    for row in rows:
+        label = _data_agent_group_label(row, widget)
+        if label not in totals:
+            totals[label] = 0.0
+
+        if aggregation == "sum":
+            totals[label] += _data_agent_numeric_value(row, value_field)
+        else:
+            totals[label] += 1.0
+
+    labels = sorted(totals.keys())
+    series = [totals[label] for label in labels]
+
+    if not labels:
+        return None
+
+    chart_type = widget.get("chart_type") or "bar"
+    if chart_type == "none":
+        chart_type = "bar"
+
+    return {
+        "id": re.sub(r"[^a-z0-9_]+", "_", str(widget.get("title") or resource).lower()).strip("_") or "chart",
+        "title": widget.get("title") or "Chart",
+        "description": widget.get("title") or "DMS chart",
+        "type": chart_type,
+        "labels": labels,
+        "series": series,
+        "total": sum(series),
+        "prefix": widget.get("prefix") or "",
+        "suffix": widget.get("suffix") or "",
+    }
+
+
+def _data_agent_build_widgets(plan: dict[str, Any], data_pack: dict[str, Any]) -> tuple[list[str], dict[str, Any]]:
+    widgets = plan.get("widgets") or []
+
+    widgets_to_show: list[str] = []
+    widget_payloads: dict[str, Any] = {}
+
+    record_table_payload: dict[str, Any] | None = None
+    charts: list[dict[str, Any]] = []
+
+    for widget in widgets:
+        if not isinstance(widget, dict):
+            continue
+
+        widget_type = widget.get("widget_type")
+
+        if widget_type == "record_table" and record_table_payload is None:
+            record_table_payload = _data_agent_table_payload(widget, data_pack)
+
+        if widget_type == "generic_charts":
+            chart = _data_agent_chart_from_widget(widget, data_pack)
+            if chart:
+                charts.append(chart)
+
+    if record_table_payload:
+        widgets_to_show.append("record_table")
+        widget_payloads["record_table"] = record_table_payload
+
+    if charts:
+        widgets_to_show.append("generic_charts")
+        widget_payloads["generic_charts"] = {
+            "title": "DMS Data Charts",
+            "scope": (data_pack.get("scope") or {}).get("company_name") or "all allowed companies",
+            "month_limit": None,
+            "charts": charts,
+            "data_source": "database",
+        }
+
+    return widgets_to_show, widget_payloads
+
+
+def _data_agent_llm_error(route: dict[str, Any], user_query: str) -> dict[str, Any]:
+    return _base_response(
+        intent="backend_llm_error",
+        metric=None,
+        time_range=None,
+        company_id=None,
+        company_name=None,
+        widgets_to_show=[],
+        text_response="Sorry, the backend LLM is not working right now. Please try again shortly.",
+        widget_payloads={},
+        other={
+            "llm_required": True,
+            "llm_provider": route.get("_llm_provider"),
+            "llm_model": route.get("_llm_model"),
+            "llm_status": route.get("_llm_status"),
+            "llm_error": route.get("_llm_error"),
+            "routing_query": user_query,
+        },
+    )
+
+
+def _data_agent_response(plan: dict[str, Any], data_pack: dict[str, Any], user_query: str) -> dict[str, Any]:
+    widgets_to_show, widget_payloads = _data_agent_build_widgets(plan, data_pack)
+
+    scope = data_pack.get("scope") or {}
+    company_id = scope.get("company_id")
+    company_name = plan.get("company_name") or scope.get("company_name")
+
+    intent = plan.get("intent") if plan.get("intent") in VALID_INTENTS else "record_lookup"
+
+    answer = str(plan.get("answer") or "").strip()
+    if not answer:
+        answer = "I could not find a matching answer in the authorised DMS data."
+
+    return _base_response(
+        intent=intent,
+        metric=plan.get("metric"),
+        time_range=plan.get("time_range"),
+        company_id=company_id,
+        company_name=company_name,
+        widgets_to_show=widgets_to_show,
+        text_response=answer,
+        widget_payloads=widget_payloads,
+        other={
+            "data_source": "authorised_dms_data_pack",
+            "answer_type": "openai_data_agent",
+            "llm_required": True,
+            "llm_provider": plan.get("_llm_provider"),
+            "llm_model": plan.get("_llm_model"),
+            "llm_status": plan.get("_llm_status"),
+            "llm_error": plan.get("_llm_error"),
+            "llm_confidence": plan.get("confidence"),
+            "routing_query": user_query,
+            "resources_visible": {
+                key: value.get("row_count")
+                for key, value in (data_pack.get("resources") or {}).items()
+            },
+        },
+    )
+
+
+def _data_agent_request_payload() -> dict[str, Any]:
+    payload: dict[str, Any] = {}
+
+    try:
+        if getattr(frappe, "request", None):
+            incoming = frappe.request.get_json(silent=True) or {}
+            if isinstance(incoming, dict):
+                payload.update(incoming)
+    except Exception:
+        pass
+
+    try:
+        payload.update(dict(frappe.form_dict or {}))
+    except Exception:
+        pass
+
+    return payload
+
+
+_OPENAI_DATA_AGENT_PREVIOUS_QUERY = globals().get("query")
+
+
+@frappe.whitelist(allow_guest=True)
+def query(query: str | None = None, conversation_context: str | None = None, **kwargs):
+    provider, _api_key, _model = _data_agent_provider_config()
+
+    # Keep old behavior if provider is not OpenAI.
+    if provider != "openai":
+        previous = globals().get("_OPENAI_DATA_AGENT_PREVIOUS_QUERY")
+        if callable(previous):
+            try:
+                return previous(query=query, conversation_context=conversation_context, **kwargs)
+            except TypeError:
+                return previous()
+        return success(data=_final_out_of_scope_response())
+
+    payload = _data_agent_request_payload()
+    payload.update(kwargs or {})
+
+    user_query = (
+        query
+        or payload.get("query")
+        or payload.get("message")
+        or payload.get("text")
+        or ""
+    )
+    user_query = str(user_query or "").strip()
+
+    conversation_context = (
+        conversation_context
+        or payload.get("conversation_context")
+        or payload.get("context")
+        or ""
+    )
+
+    if not user_query:
+        data = _base_response(
+            intent="out_of_scope",
+            metric=None,
+            time_range=None,
+            company_id=None,
+            company_name=None,
+            widgets_to_show=[],
+            text_response="Please ask a DMS data question.",
+            widget_payloads={},
+            other={"answer_type": "empty_query"},
+        )
+        return success(data=data)
+
+    denial = _data_agent_cross_tenant_denial(user_query)
+    if denial:
+        return success(data=denial)
+
+    data_pack = _data_agent_build_pack()
+    plan = _data_agent_call_openai(user_query, conversation_context, data_pack)
+
+    if plan.get("_llm_status") != "ok":
+        return success(data=_data_agent_llm_error(plan, user_query))
+
+    data = _data_agent_response(plan, data_pack, user_query)
+    return success(data=data)
+
+# OPENAI_DATA_AGENT_PATCH_END
+
+# FOCUSED_OPENAI_DATA_AGENT_PATCH_START
+
+FOCUSED_DATA_AGENT_ROW_LIMITS = {
+    "customers": 300,
+    "leads": 300,
+    "sales": 450,
+    "invoices": 450,
+    "bookings": 300,
+    "test_drives": 300,
+    "service_jobs": 220,
+    "vehicles": 220,
+}
+
+
+def _focused_da_lower(value: str | None) -> str:
+    return str(value or "").lower().strip()
+
+
+def _focused_da_has_any(text: str | None, terms: list[str]) -> bool:
+    q = _focused_da_lower(text)
+    return any(term in q for term in terms)
+
+
+def _focused_da_resources_for_query(user_query: str, conversation_context: str | None = None) -> list[str]:
+    q = _focused_da_lower((conversation_context or "") + "\n" + (user_query or ""))
+
+    if _focused_da_has_any(q, ["phone", "mobile", "contact number", "email", "mail", "join", "joined", "customer"]):
+        return ["customers", "leads", "sales", "bookings", "test_drives", "service_jobs", "invoices"]
+
+    if _focused_da_has_any(q, ["inventory", "stock", "vehicle stock", "available vehicle", "available car"]):
+        return ["vehicles", "sales", "bookings"]
+
+    if _focused_da_has_any(q, ["sale", "sales", "sold", "revenue", "income", "amount", "invoice"]):
+        return ["sales", "invoices", "customers", "vehicles"]
+
+    if _focused_da_has_any(q, ["booking", "booked", "delivery"]):
+        return ["bookings", "customers", "vehicles", "sales"]
+
+    if _focused_da_has_any(q, ["test drive", "testdrive", "scheduled"]):
+        return ["test_drives", "customers", "leads", "vehicles"]
+
+    if _focused_da_has_any(q, ["service", "job", "repair", "pending jobs", "completed jobs"]):
+        return ["service_jobs", "customers", "vehicles"]
+
+    if _focused_da_has_any(q, ["chart", "graph", "trend", "month", "months", "year", "years", "dashboard", "widget"]):
+        return ["sales", "invoices", "leads", "bookings", "test_drives", "service_jobs", "vehicles", "customers"]
+
+    return ["customers", "leads", "sales", "invoices", "bookings", "test_drives", "service_jobs", "vehicles"]
+
+
+def _focused_da_minimal_fields(resource: str, doctype: str) -> list[str]:
+    preferred = {
+        "customers": ["name", "creation", "company_id", "company_name", "customer_name", "customer_type", "mobile_no", "email", "status"],
+        "leads": ["name", "creation", "company_id", "company_name", "lead_name", "mobile_no", "email", "status", "source", "vehicle_interest"],
+        "sales": ["name", "creation", "company_id", "company_name", "customer_name", "model", "variant", "final_price", "status", "invoice_no"],
+        "invoices": ["name", "creation", "company_id", "company_name", "customer_name", "invoice_no", "invoice_type", "total_amount", "payment_status", "status", "due_date"],
+        "bookings": ["name", "creation", "company_id", "company_name", "customer_name", "model", "variant", "booking_amount", "booking_date", "expected_delivery", "status"],
+        "test_drives": ["name", "creation", "company_id", "company_name", "contact_name", "customer_name", "mobile_no", "email", "model", "scheduled_date", "scheduled_time", "status"],
+        "service_jobs": ["name", "creation", "company_id", "company_name", "customer_name", "vehicle_reg_no", "model", "service_type", "total_amount", "status"],
+        "vehicles": ["name", "creation", "company_id", "company_name", "vehicle_name", "model", "variant", "color", "stock_status", "status"],
+    }
+
+    fields = []
+    for field in preferred.get(resource, ["name", "creation", "company_id", "company_name", "status"]):
+        try:
+            if _data_agent_has_field(doctype, field):
+                fields.append(field)
+        except Exception:
+            pass
+
+    return fields or ["name", "creation"]
+
+
+def _focused_da_fetch_rows(resource: str, doctype: str, limit: int) -> list[dict[str, Any]]:
+    fields = _focused_da_minimal_fields(resource, doctype)
+
+    filters = _data_agent_filters_for_doctype(doctype)
+    if filters is None:
+        return []
+
+    try:
+        rows = frappe.get_all(
+            doctype,
+            filters=filters,
+            fields=fields,
+            order_by="creation desc",
+            limit_page_length=limit,
+        )
+    except Exception:
+        return []
+
+    cleaned = []
+    for row in rows:
+        item = {}
+        for key, value in dict(row).items():
+            item[key] = _data_agent_clean_value(value)
+
+        if item.get("company_id") and not item.get("company_name"):
+            item["company_name"] = _data_agent_company_name(item.get("company_id"))
+
+        item["_resource"] = resource
+        item["_doctype"] = doctype
+        cleaned.append(item)
+
+    return cleaned
+
+
+def _focused_da_month_label(value: Any) -> str:
+    if not value:
+        return "Unknown"
+    return str(value)[:7]
+
+
+def _focused_da_amount(row: dict[str, Any]) -> float:
+    for field in ["final_price", "total_amount", "booking_amount"]:
+        try:
+            if row.get(field) not in (None, ""):
+                return float(row.get(field) or 0)
+        except Exception:
+            pass
+    return 0.0
+
+
+def _focused_da_resource_summary(resource: str, rows: list[dict[str, Any]]) -> dict[str, Any]:
+    by_company: dict[str, int] = {}
+    by_status: dict[str, int] = {}
+    by_month_count: dict[str, int] = {}
+    by_month_amount: dict[str, float] = {}
+
+    for row in rows:
+        company = str(row.get("company_name") or row.get("company_id") or "Unknown")
+        status = str(row.get("status") or row.get("payment_status") or row.get("stock_status") or "Unknown")
+        month = _focused_da_month_label(row.get("creation"))
+
+        by_company[company] = by_company.get(company, 0) + 1
+        by_status[status] = by_status.get(status, 0) + 1
+        by_month_count[month] = by_month_count.get(month, 0) + 1
+        by_month_amount[month] = by_month_amount.get(month, 0.0) + _focused_da_amount(row)
+
+    return {
+        "row_count_in_pack": len(rows),
+        "by_company": by_company,
+        "by_status": by_status,
+        "by_month_count": dict(sorted(by_month_count.items())),
+        "by_month_amount": dict(sorted(by_month_amount.items())),
+    }
+
+
+def _focused_da_build_pack(user_query: str, conversation_context: str | None = None) -> dict[str, Any]:
+    is_admin, company_id, company_name = _data_agent_current_scope()
+    catalog = _data_agent_catalog()
+    selected_resources = _focused_da_resources_for_query(user_query, conversation_context)
+
+    resources: dict[str, Any] = {}
+
+    for resource in selected_resources:
+        meta = catalog.get(resource)
+        if not meta:
+            continue
+
+        doctype = meta["doctype"]
+        limit = FOCUSED_DATA_AGENT_ROW_LIMITS.get(resource, 150)
+        rows = _focused_da_fetch_rows(resource, doctype, limit)
+
+        resources[resource] = {
+            "doctype": doctype,
+            "title": meta["title"],
+            "fields": _focused_da_minimal_fields(resource, doctype),
+            "row_count": len(rows),
+            "limit_applied": limit,
+            "summary": _focused_da_resource_summary(resource, rows),
+            "rows": rows,
+        }
+
+    return {
+        "scope": {
+            "is_admin": is_admin,
+            "company_id": company_id,
+            "company_name": company_name,
+            "access_note": "Admin can see all companies." if is_admin else f"Tenant user can see only {company_name}.",
+        },
+        "resources": resources,
+        "widget_policy": {
+            "record_table": "Use for lists, records, search results, detail rows, contact lookup, invoices, vehicles, customers, leads, bookings, test drives, service jobs.",
+            "generic_charts": "Use for count trends, revenue trends, comparisons, month-wise summaries, status breakdowns, and all chart requests.",
+            "no_widget": "Use for simple direct answers like a single phone number, email, date, or one KPI where a chart/table adds no value.",
+        },
+    }
+
+
+def _data_agent_call_openai(user_query: str, conversation_context: str | None, data_pack: dict[str, Any]) -> dict[str, Any]:
+    _provider, api_key, model = _data_agent_provider_config()
+
+    if not api_key:
+        return {
+            "_llm_status": "missing_api_key",
+            "_llm_error": "openai_api_key/OPENAI_API_KEY not found in environment or site config",
+            "_llm_provider": "openai",
+            "_llm_model": model,
+        }
+
+    payload = {
+        "model": model,
+        "input": _data_agent_prompt(user_query, conversation_context, data_pack),
+        "text": {
+            "format": {
+                "type": "json_schema",
+                "name": "dms_data_agent_answer",
+                "strict": True,
+                "schema": _data_agent_output_schema(),
+            }
+        },
+        "store": False,
+    }
+
+    try:
+        import urllib.request
+        import urllib.error
+
+        req = urllib.request.Request(
+            "https://api.openai.com/v1/responses",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {api_key}",
+            },
+            method="POST",
+        )
+
+        with urllib.request.urlopen(req, timeout=120) as res:
+            raw = res.read().decode("utf-8")
+            response_json = json.loads(raw)
+
+        output_text = _data_agent_extract_openai_text(response_json)
+        parsed = _safe_json_loads(output_text)
+
+        if not isinstance(parsed, dict):
+            return {
+                "_llm_status": "invalid_response",
+                "_llm_error": "OpenAI returned empty or non-dict JSON",
+                "_llm_provider": "openai",
+                "_llm_model": model,
+            }
+
+        parsed["_llm_status"] = "ok"
+        parsed["_llm_error"] = None
+        parsed["_llm_provider"] = "openai"
+        parsed["_llm_model"] = model
+        return parsed
+
+    except Exception as exc:
+        error_detail = str(exc)[:2000]
+
+        try:
+            import urllib.error
+            if isinstance(exc, urllib.error.HTTPError):
+                body = exc.read().decode("utf-8", errors="replace")
+                error_detail = f"HTTP {exc.code}: {body[:2000]}"
+        except Exception:
+            pass
+
+        return {
+            "_llm_status": "call_failed",
+            "_llm_error": error_detail,
+            "_llm_provider": "openai",
+            "_llm_model": model,
+        }
+
+
+@frappe.whitelist(allow_guest=True)
+def query(query: str | None = None, conversation_context: str | None = None, **kwargs):
+    provider, _api_key, _model = _data_agent_provider_config()
+
+    if provider != "openai":
+        previous = globals().get("_OPENAI_DATA_AGENT_PREVIOUS_QUERY")
+        if callable(previous):
+            try:
+                return previous(query=query, conversation_context=conversation_context, **kwargs)
+            except TypeError:
+                return previous()
+        return success(data=_final_out_of_scope_response())
+
+    payload = _data_agent_request_payload()
+    payload.update(kwargs or {})
+
+    user_query = (
+        query
+        or payload.get("query")
+        or payload.get("message")
+        or payload.get("text")
+        or ""
+    )
+    user_query = str(user_query or "").strip()
+
+    conversation_context = (
+        conversation_context
+        or payload.get("conversation_context")
+        or payload.get("context")
+        or ""
+    )
+
+    if not user_query:
+        data = _base_response(
+            intent="out_of_scope",
+            metric=None,
+            time_range=None,
+            company_id=None,
+            company_name=None,
+            widgets_to_show=[],
+            text_response="Please ask a DMS data question.",
+            widget_payloads={},
+            other={"answer_type": "empty_query"},
+        )
+        return success(data=data)
+
+    denial = _data_agent_cross_tenant_denial(user_query)
+    if denial:
+        return success(data=denial)
+
+    data_pack = _focused_da_build_pack(user_query, conversation_context)
+    plan = _data_agent_call_openai(user_query, conversation_context, data_pack)
+
+    if plan.get("_llm_status") != "ok":
+        return success(data=_data_agent_llm_error(plan, user_query))
+
+    data = _data_agent_response(plan, data_pack, user_query)
+    return success(data=data)
+
+# FOCUSED_OPENAI_DATA_AGENT_PATCH_END
+
+# OPTIMIZED_STRUCTURED_RAG_RANKING_PATCH_START
+
+# Keep GPT context compact. Summaries still represent all fetched authorised rows.
+RAG_ROW_LIMITS = {
+    "customers": 25,
+    "leads": 25,
+    "sales": 80,
+    "invoices": 60,
+    "bookings": 50,
+    "test_drives": 50,
+    "service_jobs": 60,
+    "vehicles": 60,
+}
+
+RAG_FETCH_LIMITS = {
+    "customers": 1200,
+    "leads": 1200,
+    "sales": 1800,
+    "invoices": 1400,
+    "bookings": 1200,
+    "test_drives": 1200,
+    "service_jobs": 1600,
+    "vehicles": 1200,
+}
+
+
+def _opt_rag_lower(value: str | None) -> str:
+    return str(value or "").lower().strip()
+
+
+def _opt_rag_has_any(text: str | None, terms: list[str]) -> bool:
+    q = _opt_rag_lower(text)
+    return any(term in q for term in terms)
+
+
+def _opt_rag_tokens(text: str | None) -> list[str]:
+    stop = {
+        "what", "is", "the", "of", "for", "show", "tell", "me", "get", "give",
+        "phone", "number", "mobile", "contact", "email", "mail", "when", "did",
+        "join", "joined", "current", "chart", "graph", "sales", "sale", "last",
+        "month", "months", "year", "years", "in", "and", "or", "all", "useful",
+        "data", "details", "record", "records", "please", "customer", "lead",
+        "vehicle", "vehicles", "car", "cars", "stock", "inventory", "status",
+    }
+
+    out = []
+    for token in re.findall(r"[A-Za-z0-9]+", str(text or "").lower()):
+        if len(token) < 2 or token in stop:
+            continue
+        out.append(token)
+
+    return out[:12]
+
+
+def _opt_rag_extract_name(query_text: str) -> str | None:
+    if "_rag_extract_name" in globals():
+        try:
+            name = _rag_extract_name(query_text)
+            if name:
+                return name
+        except Exception:
+            pass
+
+    q = str(query_text or "").strip()
+
+    patterns = [
+        r"(?:phone number|contact number|mobile number|mobile no|phone no|email|mail|join|joined|customer since|details)\s+(?:of|for)\s+(.+)$",
+        r"(?:when did|when was)\s+(.+?)\s+(?:join|joined|created|added)",
+        r"(?:what is|what's|show|tell me|get)\s+(?:the\s+)?(?:phone number|contact number|mobile number|email|mail|details)\s+(?:of|for)\s+(.+)$",
+        r"(?:of|for)\s+([A-Za-z][A-Za-z .'-]{2,})\??$",
+    ]
+
+    for pattern in patterns:
+        m = re.search(pattern, q, flags=re.I)
+        if m:
+            name = m.group(1).strip()
+            name = re.sub(r"[?.,!]+$", "", name).strip()
+            name = re.sub(r"\b(customer|lead|client)\b", "", name, flags=re.I).strip()
+            return name or None
+
+    return None
+
+
+def _opt_rag_profile(user_query: str, conversation_context: str | None = None) -> dict[str, Any]:
+    full = f"{conversation_context or ''}\n{user_query or ''}"
+    q = _opt_rag_lower(full)
+    current = _opt_rag_lower(user_query)
+
+    name = _opt_rag_extract_name(user_query) or _opt_rag_extract_name(full)
+    name_tokens = _opt_rag_tokens(name)
+    query_tokens = _opt_rag_tokens(user_query)
+
+    try:
+        companies = _data_agent_company_mentions(full)
+    except Exception:
+        companies = []
+        if "honda" in q:
+            companies.append("Honda")
+        if "nexa" in q:
+            companies.append("NEXA")
+        if "jaguar" in q:
+            companies.append("Jaguar")
+
+    is_contact = _opt_rag_has_any(q, ["phone", "mobile", "contact number", "email", "mail"])
+    is_join = _opt_rag_has_any(q, ["join", "joined", "created", "added", "customer since"])
+    is_inventory = _opt_rag_has_any(q, ["inventory", "stock", "available vehicle", "available car", "vehicle stock"])
+    is_sales = _opt_rag_has_any(q, ["sale", "sales", "sold", "revenue", "income", "bought", "purchased"])
+    is_invoice = _opt_rag_has_any(q, ["invoice", "payment", "paid", "unpaid", "due", "pending amount"])
+    is_booking = _opt_rag_has_any(q, ["booking", "booked", "delivery"])
+    is_test_drive = _opt_rag_has_any(q, ["test drive", "testdrive", "scheduled drive"])
+    is_service = _opt_rag_has_any(q, ["service", "repair", "job", "jobs"])
+    is_chart = _opt_rag_has_any(q, ["chart", "graph", "trend", "dashboard", "widget", "month wise", "month-wise", "over time"])
+
+    wants_revenue = _opt_rag_has_any(q, ["revenue", "income", "amount", "total sales amount", "sales value"])
+    wants_count = _opt_rag_has_any(q, ["how many", "number of", "count", "total number"]) or (is_sales and not wants_revenue)
+
+    statuses = []
+    for status in ["open", "pending", "active", "completed", "paid", "unpaid", "in stock", "sold"]:
+        if status in q:
+            statuses.append(status)
+
+    return {
+        "full_text": full,
+        "current_text": current,
+        "name": name,
+        "name_tokens": name_tokens,
+        "query_tokens": query_tokens,
+        "companies": companies,
+        "is_contact": is_contact,
+        "is_join": is_join,
+        "is_inventory": is_inventory,
+        "is_sales": is_sales,
+        "is_invoice": is_invoice,
+        "is_booking": is_booking,
+        "is_test_drive": is_test_drive,
+        "is_service": is_service,
+        "is_chart": is_chart,
+        "wants_revenue": wants_revenue,
+        "wants_count": wants_count,
+        "statuses": statuses,
+    }
+
+
+def _rag_selected_resources(user_query: str, conversation_context: str | None = None) -> list[str]:
+    p = _opt_rag_profile(user_query, conversation_context)
+
+    # Exact contact/date lookup must not send sales/service/invoice noise.
+    if p["is_contact"] or p["is_join"]:
+        return ["customers", "leads"]
+
+    if p["is_inventory"]:
+        return ["vehicles", "bookings", "sales"]
+
+    if p["is_invoice"]:
+        return ["invoices", "customers", "sales"]
+
+    if p["is_sales"]:
+        return ["sales", "invoices", "customers", "vehicles"]
+
+    if p["is_booking"]:
+        return ["bookings", "customers", "vehicles", "sales"]
+
+    if p["is_test_drive"]:
+        return ["test_drives", "customers", "leads", "vehicles"]
+
+    if p["is_service"]:
+        return ["service_jobs", "customers", "vehicles"]
+
+    if p["is_chart"]:
+        return ["sales", "invoices", "leads", "bookings", "test_drives", "service_jobs", "vehicles"]
+
+    return ["customers", "leads", "sales", "invoices", "vehicles"]
+
+
+def _opt_rag_identity_fields(resource: str) -> list[str]:
+    return {
+        "customers": ["customer_name", "mobile_no", "email", "name"],
+        "leads": ["lead_name", "mobile_no", "email", "name"],
+        "sales": ["customer_name", "model", "variant", "invoice_no", "name"],
+        "invoices": ["customer_name", "invoice_no", "invoice_type", "name"],
+        "bookings": ["customer_name", "model", "variant", "name"],
+        "test_drives": ["contact_name", "customer_name", "mobile_no", "email", "model", "name"],
+        "service_jobs": ["customer_name", "vehicle_reg_no", "model", "service_type", "name"],
+        "vehicles": ["vehicle_name", "model", "variant", "color", "stock_status", "name"],
+    }.get(resource, ["name"])
+
+
+def _opt_rag_row_field_text(row: dict[str, Any], fields: list[str]) -> str:
+    return " ".join(str(row.get(field) or "") for field in fields).lower()
+
+
+def _opt_rag_row_all_text(row: dict[str, Any]) -> str:
+    return " ".join(str(v or "") for v in row.values()).lower()
+
+
+def _opt_rag_company_score(row: dict[str, Any], companies: list[str]) -> int:
+    if not companies:
+        return 0
+
+    row_company = str(row.get("company_name") or row.get("company_id") or "").lower()
+    score = 0
+
+    for company in companies:
+        if company.lower() == row_company:
+            score += 100
+        elif company.lower() in row_company:
+            score += 70
+
+    return score
+
+
+def _opt_rag_status_score(row: dict[str, Any], statuses: list[str]) -> int:
+    if not statuses:
+        return 0
+
+    row_status = str(row.get("status") or row.get("payment_status") or row.get("stock_status") or "").lower()
+    score = 0
+
+    for status in statuses:
+        if status == row_status:
+            score += 80
+        elif status in row_status:
+            score += 50
+
+    return score
+
+
+def _rag_rank_rows(rows: list[dict[str, Any]], user_query: str) -> list[dict[str, Any]]:
+    p = _opt_rag_profile(user_query)
+    scored: list[tuple[int, int, dict[str, Any]]] = []
+
+    for idx, row in enumerate(rows):
+        resource = row.get("_resource") or ""
+        identity_text = _opt_rag_row_field_text(row, _opt_rag_identity_fields(resource))
+        all_text = _opt_rag_row_all_text(row)
+
+        score = 0
+
+        # Exact person/entity lookup: highest priority.
+        if p["name_tokens"]:
+            if all(token in identity_text for token in p["name_tokens"]):
+                score += 500
+            elif all(token in all_text for token in p["name_tokens"]):
+                score += 350
+            else:
+                for token in p["name_tokens"]:
+                    if token in identity_text:
+                        score += 120
+                    elif token in all_text:
+                        score += 60
+
+        # General query tokens.
+        for token in p["query_tokens"]:
+            if token in identity_text:
+                score += 35
+            elif token in all_text:
+                score += 12
+
+        score += _opt_rag_company_score(row, p["companies"])
+        score += _opt_rag_status_score(row, p["statuses"])
+
+        # Resource/intent weighting.
+        if resource == "customers" and (p["is_contact"] or p["is_join"]):
+            score += 200
+        if resource == "leads" and p["is_contact"]:
+            score += 120
+        if resource == "sales" and p["is_sales"]:
+            score += 160
+        if resource == "invoices" and p["is_invoice"]:
+            score += 160
+        if resource == "vehicles" and p["is_inventory"]:
+            score += 180
+        if resource == "bookings" and p["is_booking"]:
+            score += 160
+        if resource == "test_drives" and p["is_test_drive"]:
+            score += 160
+        if resource == "service_jobs" and p["is_service"]:
+            score += 160
+
+        # For chart/trend questions, retain broader rows but still prioritize relevant resources.
+        if p["is_chart"]:
+            if resource in {"sales", "invoices", "leads", "bookings", "test_drives", "service_jobs", "vehicles"}:
+                score += 40
+
+        # Very small recency tie-breaker only; do not overpower exact entity match.
+        creation = str(row.get("creation") or "")
+        if creation:
+            score += 1
+
+        scored.append((score, -idx, row))
+
+    scored.sort(key=lambda item: (item[0], item[1]), reverse=True)
+
+    # If strong exact/entity matches exist, drop irrelevant zero-score rows.
+    if any(score >= 250 for score, _idx, _row in scored):
+        return [row for score, _idx, row in scored if score > 0]
+
+    # For contact/join queries, do not send random unrelated rows if no match.
+    if p["is_contact"] or p["is_join"]:
+        return [row for score, _idx, row in scored if score > 0]
+
+    return [row for _score, _idx, row in scored]
+
+
+def _opt_rag_limit_for(resource: str, profile: dict[str, Any]) -> int:
+    if profile["is_contact"] or profile["is_join"]:
+        return 12 if resource in {"customers", "leads"} else 0
+
+    if profile["is_chart"]:
+        return {
+            "sales": 40,
+            "invoices": 30,
+            "leads": 25,
+            "bookings": 25,
+            "test_drives": 25,
+            "service_jobs": 30,
+            "vehicles": 25,
+        }.get(resource, 15)
+
+    if profile["is_sales"]:
+        return {"sales": 60, "invoices": 30, "customers": 25, "vehicles": 20}.get(resource, 20)
+
+    if profile["is_inventory"]:
+        return {"vehicles": 50, "bookings": 20, "sales": 20}.get(resource, 15)
+
+    return RAG_ROW_LIMITS.get(resource, 30)
+
+
+def _structured_rag_build_pack(user_query: str, conversation_context: str | None = None) -> dict[str, Any]:
+    is_admin, company_id, company_name = _data_agent_current_scope()
+    catalog = _data_agent_catalog()
+    profile = _opt_rag_profile(user_query, conversation_context)
+    selected = _rag_selected_resources(user_query, conversation_context)
+
+    resources: dict[str, Any] = {}
+
+    for resource in selected:
+        meta = catalog.get(resource)
+        if not meta:
+            continue
+
+        doctype = meta["doctype"]
+        all_rows = _rag_fetch_resource_rows(resource, doctype)
+        ranked_rows = _rag_rank_rows(all_rows, user_query)
+        keep = _opt_rag_limit_for(resource, profile)
+        rows_for_llm = ranked_rows[:keep] if keep > 0 else []
+
+        resources[resource] = {
+            "doctype": doctype,
+            "title": meta["title"],
+            "fields": _rag_fields(resource, doctype),
+            "row_count": len(rows_for_llm),
+            "total_rows_available": len(all_rows),
+            "summary": _rag_summary(all_rows),
+            "rows": rows_for_llm,
+        }
+
+    return {
+        "scope": {
+            "is_admin": is_admin,
+            "company_id": company_id,
+            "company_name": company_name,
+            "access_note": "Admin can see all companies." if is_admin else f"Tenant user can see only {company_name}.",
+        },
+        "retrieval": {
+            "mode": "optimized_structured_database_rag",
+            "selected_resources": selected,
+            "query_profile": {
+                "name": profile.get("name"),
+                "companies": profile.get("companies"),
+                "is_contact": profile.get("is_contact"),
+                "is_join": profile.get("is_join"),
+                "is_inventory": profile.get("is_inventory"),
+                "is_sales": profile.get("is_sales"),
+                "is_invoice": profile.get("is_invoice"),
+                "is_chart": profile.get("is_chart"),
+            },
+            "note": "Rows are authorised, resource-filtered, field-weighted, ranked, and compacted before sending to GPT. Summaries are calculated from all fetched authorised rows.",
+        },
+        "resources": resources,
+        "widget_policy": {
+            "record_table": "Use for lists, records, search results, detail rows, contact lookup, invoices, vehicles, customers, leads, bookings, test drives, service jobs.",
+            "generic_charts": "Use for count trends, revenue trends, comparisons, month-wise summaries, status breakdowns, and all chart requests.",
+            "no_widget": "Use for simple direct answers like a single phone number, email, date, or one KPI where a chart/table adds no value.",
+        },
+    }
+
+
+def _data_agent_prompt(user_query: str, conversation_context: str | None, data_pack: dict[str, Any]) -> str:
+    compact_pack = json.dumps(data_pack, ensure_ascii=False, default=str, separators=(",", ":"))
+
+    return f"""
+You are Vividity, a Dealer Management System data agent.
+
+Answer only from the authorised DMS data pack. Do not invent values.
+If the answer is not present, say the matching data was not found.
+
+Security:
+- The backend has already tenant-scoped the data pack.
+- Never answer using data not present in the pack.
+
+Reasoning:
+- Customers/leads contain phone, email, join/created date, and contact details.
+- For join/customer-since questions, use a dedicated join field if present; otherwise use creation.
+- Sales/sold/cars sold usually means vehicle sale count unless revenue/amount/income is explicit.
+- Revenue/amount uses final_price, total_amount, or booking_amount when relevant.
+- For charts, use summaries and/or rows in the pack.
+- For simple direct answers, do not request widgets.
+- For lists/details, use record_table.
+- For trends/comparisons/status breakdowns, use generic_charts.
+- Multiple useful charts may be returned when the user asks for all useful charts/widgets.
+
+User question:
+{user_query}
+
+Conversation context:
+{conversation_context or ""}
+
+Authorised DMS data pack:
+{compact_pack}
+""".strip()
+
+# OPTIMIZED_STRUCTURED_RAG_RANKING_PATCH_END
+
+# ULTRA_COMPACT_RAG_FINAL_PATCH_START
+
+ULTRA_RAG_DETAIL_LIMIT = 12
+ULTRA_RAG_CHART_ROW_LIMIT = 700
+ULTRA_RAG_LIST_LIMIT = 80
+
+
+def _ultra_lower(value: str | None) -> str:
+    return str(value or "").lower().strip()
+
+
+def _ultra_has_any(text: str | None, terms: list[str]) -> bool:
+    q = _ultra_lower(text)
+    return any(term in q for term in terms)
+
+
+def _ultra_tokens(text: str | None) -> list[str]:
+    stop = {
+        "what", "is", "the", "of", "for", "show", "tell", "me", "get", "give",
+        "phone", "number", "mobile", "contact", "email", "mail", "when", "did",
+        "join", "joined", "created", "added", "current", "chart", "graph",
+        "sales", "sale", "last", "month", "months", "year", "years", "in",
+        "and", "or", "all", "useful", "data", "details", "record", "records",
+        "please", "customer", "lead", "vehicle", "vehicles", "car", "cars",
+        "stock", "inventory", "status",
+    }
+    return [
+        token for token in re.findall(r"[A-Za-z0-9]+", str(text or "").lower())
+        if len(token) >= 2 and token not in stop
+    ][:12]
+
+
+def _ultra_extract_name(query_text: str) -> str | None:
+    q = str(query_text or "").strip()
+
+    patterns = [
+        r"(?:phone number|contact number|mobile number|mobile no|phone no|email|mail|join|joined|customer since|details)\s+(?:of|for)\s+(.+)$",
+        r"(?:when did|when was)\s+(.+?)\s+(?:join|joined|created|added)",
+        r"(?:what is|what's|show|tell me|get)\s+(?:the\s+)?(?:phone number|contact number|mobile number|email|mail|details)\s+(?:of|for)\s+(.+)$",
+        r"(?:of|for)\s+([A-Za-z][A-Za-z .'-]{2,})\??$",
+    ]
+
+    for pattern in patterns:
+        match = re.search(pattern, q, flags=re.I)
+        if match:
+            name = match.group(1).strip()
+            name = re.sub(r"[?.,!]+$", "", name).strip()
+            name = re.sub(r"\b(customer|lead|client)\b", "", name, flags=re.I).strip()
+            return name or None
+
+    return None
+
+
+def _ultra_month_limit(query_text: str) -> int | None:
+    q = _ultra_lower(query_text)
+
+    m = re.search(r"(?:last|past|previous)\s+(\d+)\s+months?", q)
+    if m:
+        return int(m.group(1))
+
+    m = re.search(r"(?:last|past|previous)\s+(\d+)\s+years?", q)
+    if m:
+        return int(m.group(1)) * 12
+
+    if "few months" in q:
+        return 3
+    if "couple months" in q:
+        return 2
+    if "several months" in q:
+        return 6
+    if "last month" in q or "previous month" in q:
+        return 1
+
+    return None
+
+
+def _ultra_date_filter(query_text: str) -> tuple[dict[str, Any], str | None]:
+    month_limit = _ultra_month_limit(query_text)
+    if month_limit:
+        try:
+            start, end = _month_window(month_limit)
+            if start and end:
+                return {"creation": ["between", [start, end]]}, f"last {month_limit} months"
+        except Exception:
+            pass
+
+    return {}, None
+
+
+def _ultra_resource_intent(query_text: str, context: str | None = None) -> dict[str, Any]:
+    full = f"{context or ''}\n{query_text or ''}"
+    q = _ultra_lower(full)
+
+    is_contact = _ultra_has_any(q, ["phone", "mobile", "contact number", "email", "mail"])
+    is_join = _ultra_has_any(q, ["join", "joined", "customer since", "created", "added"])
+    is_inventory = _ultra_has_any(q, ["inventory", "stock", "available vehicle", "available car", "vehicle stock"])
+    is_invoice = _ultra_has_any(q, ["invoice", "payment", "paid", "unpaid", "due"])
+    is_sales = _ultra_has_any(q, ["sale", "sales", "sold", "revenue", "income", "bought", "purchased"])
+    is_booking = _ultra_has_any(q, ["booking", "booked", "delivery"])
+    is_test_drive = _ultra_has_any(q, ["test drive", "testdrive"])
+    is_service = _ultra_has_any(q, ["service", "repair", "job", "jobs"])
+    is_chart = _ultra_has_any(q, ["chart", "graph", "trend", "dashboard", "widget", "month wise", "month-wise", "over time"])
+
+    if is_contact or is_join:
+        resources = ["customers", "leads"]
+        mode = "exact_contact_or_join"
+    elif is_inventory:
+        resources = ["vehicles"]
+        mode = "inventory"
+    elif is_invoice:
+        resources = ["invoices", "customers", "sales"]
+        mode = "invoice"
+    elif is_sales:
+        resources = ["sales", "invoices", "customers"]
+        mode = "sales"
+    elif is_booking:
+        resources = ["bookings", "customers"]
+        mode = "booking"
+    elif is_test_drive:
+        resources = ["test_drives", "customers", "leads"]
+        mode = "test_drive"
+    elif is_service:
+        resources = ["service_jobs", "customers"]
+        mode = "service"
+    elif is_chart:
+        resources = ["sales", "invoices", "leads", "bookings", "test_drives", "service_jobs", "vehicles"]
+        mode = "chart"
+    else:
+        resources = ["customers", "leads", "sales", "invoices", "vehicles"]
+        mode = "general"
+
+    return {
+        "mode": mode,
+        "resources": resources,
+        "name": _ultra_extract_name(query_text) or _ultra_extract_name(full),
+        "tokens": _ultra_tokens(query_text),
+        "companies": _data_agent_company_mentions(full) if "_data_agent_company_mentions" in globals() else [],
+        "is_chart": is_chart,
+        "is_contact": is_contact,
+        "is_join": is_join,
+        "is_sales": is_sales,
+        "is_inventory": is_inventory,
+        "is_invoice": is_invoice,
+    }
+
+
+def _ultra_fields(resource: str, doctype: str) -> list[str]:
+    wanted = {
+        "customers": ["name", "creation", "company_id", "company_name", "customer_name", "customer_type", "mobile_no", "email", "status"],
+        "leads": ["name", "creation", "company_id", "company_name", "lead_name", "mobile_no", "email", "status", "source", "vehicle_interest"],
+        "sales": ["name", "creation", "company_id", "company_name", "customer_name", "model", "variant", "final_price", "status", "invoice_no"],
+        "invoices": ["name", "creation", "company_id", "company_name", "customer_name", "invoice_no", "invoice_type", "total_amount", "payment_status", "status", "due_date"],
+        "bookings": ["name", "creation", "company_id", "company_name", "customer_name", "model", "variant", "booking_amount", "booking_date", "expected_delivery", "status"],
+        "test_drives": ["name", "creation", "company_id", "company_name", "contact_name", "customer_name", "mobile_no", "email", "model", "scheduled_date", "scheduled_time", "status"],
+        "service_jobs": ["name", "creation", "company_id", "company_name", "customer_name", "vehicle_reg_no", "model", "service_type", "total_amount", "status"],
+        "vehicles": ["name", "creation", "company_id", "company_name", "vehicle_name", "model", "variant", "color", "stock_status", "status"],
+    }.get(resource, ["name", "creation", "company_id", "company_name", "status"])
+
+    fields = []
+    for field in wanted:
+        try:
+            if _data_agent_has_field(doctype, field):
+                fields.append(field)
+        except Exception:
+            pass
+
+    return fields or ["name", "creation"]
+
+
+def _ultra_fetch(resource: str, doctype: str, query_text: str, intent: dict[str, Any]) -> list[dict[str, Any]]:
+    fields = _ultra_fields(resource, doctype)
+    filters = _data_agent_filters_for_doctype(doctype)
+    if filters is None:
+        return []
+
+    filters = dict(filters)
+
+    date_filter, _time_text = _ultra_date_filter(query_text)
+    if date_filter and resource in {"sales", "invoices", "bookings", "test_drives", "service_jobs"}:
+        filters.update(date_filter)
+
+    fetch_limit = ULTRA_RAG_CHART_ROW_LIMIT if intent.get("is_chart") else 500
+
+    try:
+        rows = frappe.get_all(
+            doctype,
+            filters=filters,
+            fields=fields,
+            order_by="creation desc",
+            limit_page_length=fetch_limit,
+        )
+    except Exception:
+        return []
+
+    cleaned = []
+    for row in rows:
+        item = {}
+        for key, value in dict(row).items():
+            item[key] = _data_agent_clean_value(value)
+
+        if item.get("company_id") and not item.get("company_name"):
+            item["company_name"] = _data_agent_company_name(item.get("company_id"))
+
+        item["_resource"] = resource
+        item["_doctype"] = doctype
+        cleaned.append(item)
+
+    return cleaned
+
+
+def _ultra_text(row: dict[str, Any]) -> str:
+    return " ".join(str(v or "") for v in row.values()).lower()
+
+
+def _ultra_rank(rows: list[dict[str, Any]], intent: dict[str, Any]) -> list[dict[str, Any]]:
+    name_tokens = _ultra_tokens(intent.get("name"))
+    query_tokens = intent.get("tokens") or []
+    companies = [str(c).lower() for c in intent.get("companies") or []]
+
+    scored = []
+    for idx, row in enumerate(rows):
+        text = _ultra_text(row)
+        resource = row.get("_resource")
+        score = 0
+
+        if name_tokens:
+            if all(token in text for token in name_tokens):
+                score += 1000
+            else:
+                for token in name_tokens:
+                    if token in text:
+                        score += 160
+
+        for token in query_tokens:
+            if token in text:
+                score += 30
+
+        row_company = str(row.get("company_name") or row.get("company_id") or "").lower()
+        for company in companies:
+            if company == row_company:
+                score += 220
+            elif company in row_company:
+                score += 120
+
+        if resource == "customers" and (intent.get("is_contact") or intent.get("is_join")):
+            score += 300
+        if resource == "leads" and intent.get("is_contact"):
+            score += 180
+        if resource == "sales" and intent.get("is_sales"):
+            score += 220
+        if resource == "vehicles" and intent.get("is_inventory"):
+            score += 220
+        if resource == "invoices" and intent.get("is_invoice"):
+            score += 220
+
+        scored.append((score, -idx, row))
+
+    scored.sort(key=lambda x: (x[0], x[1]), reverse=True)
+
+    # For exact contact/date lookup, never send random unrelated rows if no match.
+    if intent.get("mode") == "exact_contact_or_join":
+        matched = [row for score, _idx, row in scored if score > 0]
+        return matched
+
+    return [row for _score, _idx, row in scored]
+
+
+def _ultra_amount(row: dict[str, Any]) -> float:
+    for field in ["final_price", "total_amount", "booking_amount"]:
+        try:
+            if row.get(field) not in (None, ""):
+                return float(row.get(field) or 0)
+        except Exception:
+            pass
+    return 0.0
+
+
+def _ultra_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    by_company_count = {}
+    by_company_amount = {}
+    by_status_count = {}
+    by_month_count = {}
+    by_month_amount = {}
+
+    for row in rows:
+        company = str(row.get("company_name") or row.get("company_id") or "Unknown")
+        status = str(row.get("status") or row.get("payment_status") or row.get("stock_status") or "Unknown")
+        month = str(row.get("creation") or "Unknown")[:7]
+        amount = _ultra_amount(row)
+
+        by_company_count[company] = by_company_count.get(company, 0) + 1
+        by_company_amount[company] = by_company_amount.get(company, 0.0) + amount
+        by_status_count[status] = by_status_count.get(status, 0) + 1
+        by_month_count[month] = by_month_count.get(month, 0) + 1
+        by_month_amount[month] = by_month_amount.get(month, 0.0) + amount
+
+    return {
+        "total_rows_available": len(rows),
+        "by_company_count": dict(sorted(by_company_count.items())),
+        "by_company_amount": dict(sorted(by_company_amount.items())),
+        "by_status_count": dict(sorted(by_status_count.items())),
+        "by_month_count": dict(sorted(by_month_count.items())),
+        "by_month_amount": dict(sorted(by_month_amount.items())),
+    }
+
+
+def _ultra_build_pack(user_query: str, conversation_context: str | None = None) -> dict[str, Any]:
+    is_admin, company_id, company_name = _data_agent_current_scope()
+    catalog = _data_agent_catalog()
+    intent = _ultra_resource_intent(user_query, conversation_context)
+
+    resources = {}
+
+    for resource in intent["resources"]:
+        meta = catalog.get(resource)
+        if not meta:
+            continue
+
+        doctype = meta["doctype"]
+        all_rows = _ultra_fetch(resource, doctype, user_query, intent)
+        ranked = _ultra_rank(all_rows, intent)
+
+        if intent["mode"] == "exact_contact_or_join":
+            keep = ULTRA_RAG_DETAIL_LIMIT
+        elif intent["is_chart"]:
+            keep = 10
+        elif intent["mode"] in {"inventory", "sales", "invoice"}:
+            keep = 40
+        else:
+            keep = 30
+
+        rows_for_llm = ranked[:keep]
+
+        resources[resource] = {
+            "doctype": doctype,
+            "title": meta["title"],
+            "fields": _ultra_fields(resource, doctype),
+            "row_count": len(rows_for_llm),
+            "total_rows_available": len(all_rows),
+            "summary": _ultra_summary(all_rows),
+            "rows": rows_for_llm,
+        }
+
+    pack = {
+        "scope": {
+            "is_admin": is_admin,
+            "company_id": company_id,
+            "company_name": company_name,
+            "access_note": "Admin can see all companies." if is_admin else f"Tenant user can see only {company_name}.",
+        },
+        "retrieval": {
+            "mode": "ultra_compact_structured_rag",
+            "intent": intent,
+            "note": "Only top ranked authorised rows and compact summaries are sent to GPT.",
+        },
+        "resources": resources,
+        "widget_policy": {
+            "record_table": "Use only for useful lists/details.",
+            "generic_charts": "Use only for useful trends/comparisons/status breakdowns.",
+            "no_widget": "Use for single direct answers.",
+        },
+    }
+
+    pack["_debug_context_chars"] = len(json.dumps(pack, ensure_ascii=False, default=str, separators=(",", ":")))
+    return pack
+
+
+def _data_agent_prompt(user_query: str, conversation_context: str | None, data_pack: dict[str, Any]) -> str:
+    compact_pack = json.dumps(data_pack, ensure_ascii=False, default=str, separators=(",", ":"))
+
+    return f"""You are Vividity, a DMS data agent.
+
+Answer only from the authorised DMS data pack. Do not invent values.
+If the answer is not present, say the matching data was not found.
+
+Rules:
+- For phone/email/date questions, answer directly and do not use widgets.
+- For join/customer-since questions, use a join field if present; otherwise use creation.
+- For list/detail questions, use record_table only if useful.
+- For trends/comparisons/status breakdowns, use generic_charts only if useful.
+- Sales/sold/cars sold normally means vehicle sale count unless revenue/amount/income is explicit.
+
+User question:
+{user_query}
+
+Conversation context:
+{conversation_context or ""}
+
+Authorised DMS data pack:
+{compact_pack}
+""".strip()
+
+
+@frappe.whitelist(allow_guest=True)
+def query(query: str | None = None, conversation_context: str | None = None, **kwargs):
+    provider, _api_key, _model = _data_agent_provider_config()
+
+    if provider != "openai":
+        previous = globals().get("_OPENAI_DATA_AGENT_PREVIOUS_QUERY")
+        if callable(previous):
+            try:
+                return previous(query=query, conversation_context=conversation_context, **kwargs)
+            except TypeError:
+                return previous()
+        return success(data=_final_out_of_scope_response())
+
+    payload = _data_agent_request_payload()
+    payload.update(kwargs or {})
+
+    user_query = str(query or payload.get("query") or payload.get("message") or payload.get("text") or "").strip()
+    conversation_context = str(conversation_context or payload.get("conversation_context") or payload.get("context") or "")
+
+    if not user_query:
+        data = _base_response(
+            intent="out_of_scope",
+            metric=None,
+            time_range=None,
+            company_id=None,
+            company_name=None,
+            widgets_to_show=[],
+            text_response="Please ask a DMS data question.",
+            widget_payloads={},
+            other={"answer_type": "empty_query"},
+        )
+        return success(data=data)
+
+    denial = _data_agent_cross_tenant_denial(user_query)
+    if denial:
+        return success(data=denial)
+
+    data_pack = _ultra_build_pack(user_query, conversation_context)
+    plan = _data_agent_call_openai(user_query, conversation_context, data_pack)
+
+    if plan.get("_llm_status") != "ok":
+        data = _data_agent_llm_error(plan, user_query)
+        try:
+            data["filters_applied"]["other"]["rag_mode"] = "ultra_compact_structured_rag"
+            data["filters_applied"]["other"]["rag_context_chars"] = data_pack.get("_debug_context_chars")
+            data["filters_applied"]["other"]["rag_resources"] = list((data_pack.get("resources") or {}).keys())
+        except Exception:
+            pass
+        return success(data=data)
+
+    data = _data_agent_response(plan, data_pack, user_query)
+
+    try:
+        data["filters_applied"]["other"]["rag_mode"] = "ultra_compact_structured_rag"
+        data["filters_applied"]["other"]["rag_context_chars"] = data_pack.get("_debug_context_chars")
+        data["filters_applied"]["other"]["rag_resources"] = list((data_pack.get("resources") or {}).keys())
+    except Exception:
+        pass
+
+    return success(data=data)
+
+# ULTRA_COMPACT_RAG_FINAL_PATCH_END
+
