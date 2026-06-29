@@ -783,7 +783,7 @@ function RpaAgentPanel({ user }: { user: User | null }) {
           <div>
             <div className="mb-1 flex items-center gap-2 text-xs font-medium uppercase tracking-wider text-violet-500">
               <Workflow className="h-3.5 w-3.5" />
-              RPA Agent
+              Clutch
             </div>
             <h1 className="text-xl font-semibold text-foreground">GoHighLevel Contact Automation</h1>
             <p className="mt-1 text-sm text-muted-foreground">
@@ -1263,7 +1263,7 @@ export default function ChatPage() {
             >
               <span className="flex items-center gap-2">
                 <Bot className="h-4 w-4" />
-                Chat Agent
+                Vividity
               </span>
             </button>
 
@@ -1296,7 +1296,7 @@ export default function ChatPage() {
             >
               <span className="flex items-center gap-2">
                 <Workflow className="h-4 w-4" />
-                RPA Agent
+                Clutch
               </span>
               <span className="text-[10px] text-white/40">GHL</span>
             </button>
@@ -1320,15 +1320,57 @@ export default function ChatPage() {
       <div className="relative flex flex-1 flex-col overflow-hidden bg-background">
         {activeModule === 'chat' && <AiAmbientBackground />}
         {activeModule === 'voice' && (
-          <div className="absolute inset-0 z-20 flex items-center justify-center bg-background">
-            <div className="max-w-sm rounded-2xl border border-border bg-card p-6 text-center shadow-sm">
-              <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-muted text-muted-foreground">
-                <PhoneCall className="h-5 w-5" />
+          <div className="absolute inset-0 z-20 overflow-y-auto bg-background">
+            <div className="mx-auto flex min-h-full max-w-4xl items-center justify-center px-6 py-10">
+              <div className="w-full overflow-hidden rounded-3xl border border-border bg-card shadow-sm">
+                <div className="border-b border-border bg-gradient-to-r from-violet-500/10 via-indigo-500/5 to-background px-6 py-5">
+                  <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <div className="mb-2 flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-violet-500">
+                        <PhoneCall className="h-4 w-4" />
+                        Voice Agent Demo
+                      </div>
+                      <h2 className="text-xl font-semibold text-foreground">
+                        BlueStacks Cleaning Service
+                      </h2>
+                      <p className="mt-1 text-sm text-muted-foreground">
+                        Demo voice interaction for a US-based cleaning service client.
+                      </p>
+                    </div>
+                    <div className="w-fit rounded-full border border-violet-500/20 bg-violet-500/10 px-3 py-1.5 text-xs font-semibold text-violet-600">
+                      US Client Demo
+                    </div>
+                  </div>
+                </div>
+
+                <div className="p-6">
+                  <div className="rounded-2xl border border-border bg-background p-5">
+                    <h3 className="text-base font-semibold text-foreground">Call Recording</h3>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      Play the recording below to review the Voice Agent demo conversation.
+                    </p>
+
+                    <div className="mt-5 rounded-2xl border border-border bg-card p-4">
+                      <audio
+                        controls
+                        preload="metadata"
+                        className="w-full"
+                      >
+                        <source
+                          src="/demo-assets/bluestacks-cleaning-voice-agent-demo.wav"
+                          type="audio/wav"
+                        />
+                        Your browser does not support the audio element.
+                      </audio>
+                    </div>
+
+                    <p className="mt-3 text-xs text-muted-foreground">
+                      Recording: BlueStacks Cleaning Service · English · Voice Agent demo
+                    </p>
+                  </div>
+
+                </div>
               </div>
-              <h2 className="text-base font-semibold text-foreground">Voice Agent</h2>
-              <p className="mt-2 text-sm text-muted-foreground">
-                Voice automation is not enabled yet. Use Chat Agent or RPA Agent for now.
-              </p>
             </div>
           </div>
         )}
@@ -1339,7 +1381,7 @@ export default function ChatPage() {
               <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-red-500/10 text-red-500">
                 <ShieldCheck className="h-5 w-5" />
               </div>
-              <h2 className="text-base font-semibold text-foreground">RPA Agent is admin-only</h2>
+              <h2 className="text-base font-semibold text-foreground">Clutch is admin-only</h2>
               <p className="mt-2 text-sm text-muted-foreground">
                 GoHighLevel RPA is available only for the full admin account.
               </p>
@@ -1358,7 +1400,7 @@ export default function ChatPage() {
             <div className="mx-auto flex max-w-4xl flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <div className="flex items-center gap-2">
-                  <h1 className="text-sm font-semibold text-foreground">Chat Agent</h1>
+                  <h1 className="text-sm font-semibold text-foreground">Vividity</h1>
                   <span className="rounded-full border border-violet-500/25 bg-violet-500/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-violet-600">
                     AI Demo Mode
                   </span>
@@ -1382,7 +1424,7 @@ export default function ChatPage() {
             <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-violet-500 to-indigo-600 shadow-lg shadow-violet-500/25 mb-5">
               <Sparkles className="h-8 w-8 text-white" />
             </div>
-            <h2 className="text-2xl font-bold text-foreground mb-1">Chat Agent Beta</h2>
+            <h2 className="text-2xl font-bold text-foreground mb-1">Vividity Beta</h2>
             <p className="text-sm text-muted-foreground mb-8 text-center max-w-sm">
               Ask about customers, sales, inventory, invoices, or tenant performance using scoped DMS data.
             </p>

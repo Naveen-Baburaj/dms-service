@@ -1,6 +1,6 @@
 import axios, { AxiosInstance, AxiosRequestConfig, AxiosResponse } from 'axios';
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://dms.localhost:8000';
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://dms.localhost:8000';
 
 const ACCESS_TOKEN_KEY = 'dms_access_token';
 const REFRESH_TOKEN_KEY = 'dms_refresh_token';

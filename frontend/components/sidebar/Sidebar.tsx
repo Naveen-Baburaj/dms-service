@@ -21,7 +21,7 @@ interface NavItem {
 
 const mainNavItems: NavItem[] = [
   { label: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
-  { label: 'AI Assistant', href: '/chat', icon: Sparkles },
+  { label: 'AI Agents', href: '/chat', icon: Sparkles },
   { label: 'Leads', href: '/leads', icon: Users },
   { label: 'Customers', href: '/customers', icon: UserCheck },
   { label: 'Sales', href: '/sales', icon: ShoppingCart },
