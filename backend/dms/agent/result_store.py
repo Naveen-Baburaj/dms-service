@@ -206,7 +206,10 @@ def _aggregate_dataset(
             continue
         seen_measure_keys.add(measure["key"])
         measures.append(measure)
-        totals[measure["key"]] = output.get("total_value")
+        if "overall_value" in output:
+            totals[measure["key"]] = output.get("overall_value")
+        else:
+            totals[measure["key"]] = output.get("total_value")
 
         for raw_row in output.get("rows") or []:
             if not isinstance(raw_row, dict):

@@ -134,40 +134,141 @@ RESOURCE_SEMANTICS: dict[str, dict[str, Any]] = {
 
 
 METRIC_CATALOG: dict[str, dict[str, Any]] = {
+    "customer_count": {
+        "resource": "customers",
+        "aggregation": "count",
+        "description": "Number of authorised customer records.",
+    },
+    "lead_count": {
+        "resource": "leads",
+        "aggregation": "count",
+        "description": "Number of authorised lead records.",
+    },
     "vehicle_sales_count": {
         "resource": "sales",
         "aggregation": "count",
         "description": "Number of authorised vehicle sale records.",
     },
+    "invoice_count": {
+        "resource": "invoices",
+        "aggregation": "count",
+        "description": "Number of authorised invoice records.",
+    },
+    "booking_count": {
+        "resource": "bookings",
+        "aggregation": "count",
+        "description": "Number of authorised booking records.",
+    },
+    "test_drive_count": {
+        "resource": "test_drives",
+        "aggregation": "count",
+        "description": "Number of authorised test-drive records.",
+    },
+    "service_job_count": {
+        "resource": "service_jobs",
+        "aggregation": "count",
+        "description": "Number of authorised service-job records.",
+    },
+    "inventory_vehicle_count": {
+        "resource": "vehicles",
+        "aggregation": "count",
+        "description": "Number of authorised vehicle inventory records.",
+    },
     "sales_revenue": {
         "resource": "sales",
         "aggregation": "sum",
         "value_field": "final_price",
-        "description": "Sum of final_price across authorised sales.",
+        "description": "Exact sum of final_price across authorised sales.",
     },
     "average_sale_value": {
         "resource": "sales",
         "aggregation": "average",
         "value_field": "final_price",
-        "description": "Average final_price across authorised sales.",
+        "description": "Exact average final_price across authorised sales.",
+    },
+    "minimum_sale_value": {
+        "resource": "sales",
+        "aggregation": "min",
+        "value_field": "final_price",
+        "description": "Minimum final_price across authorised sales.",
+    },
+    "maximum_sale_value": {
+        "resource": "sales",
+        "aggregation": "max",
+        "value_field": "final_price",
+        "description": "Maximum final_price across authorised sales.",
     },
     "invoice_value": {
         "resource": "invoices",
         "aggregation": "sum",
         "value_field": "total_amount",
-        "description": "Sum of authorised invoice total_amount.",
+        "description": "Exact sum of authorised invoice total_amount.",
+    },
+    "average_invoice_value": {
+        "resource": "invoices",
+        "aggregation": "average",
+        "value_field": "total_amount",
+        "description": "Exact average authorised invoice total_amount.",
+    },
+    "minimum_invoice_value": {
+        "resource": "invoices",
+        "aggregation": "min",
+        "value_field": "total_amount",
+        "description": "Minimum authorised invoice total_amount.",
+    },
+    "maximum_invoice_value": {
+        "resource": "invoices",
+        "aggregation": "max",
+        "value_field": "total_amount",
+        "description": "Maximum authorised invoice total_amount.",
     },
     "booking_value": {
         "resource": "bookings",
         "aggregation": "sum",
         "value_field": "booking_amount",
-        "description": "Sum of authorised booking_amount.",
+        "description": "Exact sum of authorised booking_amount.",
+    },
+    "average_booking_value": {
+        "resource": "bookings",
+        "aggregation": "average",
+        "value_field": "booking_amount",
+        "description": "Exact average authorised booking_amount.",
+    },
+    "minimum_booking_value": {
+        "resource": "bookings",
+        "aggregation": "min",
+        "value_field": "booking_amount",
+        "description": "Minimum authorised booking_amount.",
+    },
+    "maximum_booking_value": {
+        "resource": "bookings",
+        "aggregation": "max",
+        "value_field": "booking_amount",
+        "description": "Maximum authorised booking_amount.",
     },
     "service_revenue": {
         "resource": "service_jobs",
         "aggregation": "sum",
         "value_field": "total_amount",
-        "description": "Sum of authorised service-job total_amount.",
+        "description": "Exact sum of authorised service-job total_amount.",
+    },
+    "average_service_value": {
+        "resource": "service_jobs",
+        "aggregation": "average",
+        "value_field": "total_amount",
+        "description": "Exact average authorised service-job total_amount.",
+    },
+    "minimum_service_value": {
+        "resource": "service_jobs",
+        "aggregation": "min",
+        "value_field": "total_amount",
+        "description": "Minimum authorised service-job total_amount.",
+    },
+    "maximum_service_value": {
+        "resource": "service_jobs",
+        "aggregation": "max",
+        "value_field": "total_amount",
+        "description": "Maximum authorised service-job total_amount.",
     },
 }
 

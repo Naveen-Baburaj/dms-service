@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from collections import defaultdict
 from typing import Any
 
+from dms.agent.native_analytics import execute_native_aggregate
 from dms.agent.registry import register_tool
 from dms.agent.semantics import (
     METRIC_CATALOG,
@@ -126,55 +126,6 @@ def _filter_rows(
 
     return filtered
 
-
-def _numeric(value: Any) -> float | None:
-    if value in (None, ""):
-        return None
-    try:
-        return float(value)
-    except Exception:
-        return None
-
-
-def _group_key(
-    row: dict[str, Any],
-    *,
-    resource: str,
-    group_by: str,
-) -> tuple[str, dict[str, Any]]:
-    if group_by == "none":
-        return "All", {"group": "All"}
-    if group_by == "company":
-        company = clean_company(row)
-        return company, {"company": company}
-    if group_by == "status":
-        status = clean_status(row, resource)
-        return status, {"status": status}
-    if group_by == "model":
-        model = str(
-            row.get("model")
-            or row.get("vehicle_name")
-            or row.get("variant")
-            or "Unknown"
-        ).strip()
-        return model, {"model": model}
-
-    date_field, date_value = first_date_value(row, resource)
-    row_date = parse_date(date_value)
-    month = row_date.strftime("%Y-%m") if row_date else "Unknown"
-    if group_by == "month":
-        return month, {"month": month, "date_field": date_field}
-    if group_by == "company_month":
-        company = clean_company(row)
-        return (
-            f"{company}|{month}",
-            {
-                "company": company,
-                "month": month,
-                "date_field": date_field,
-            },
-        )
-    raise ValueError(f"Unsupported grouping: {group_by}")
 
 
 @register_tool(
@@ -413,110 +364,4 @@ def aggregate_dms_records(
     context: ToolContext,
     arguments: dict[str, Any],
 ) -> dict[str, Any]:
-    resource = arguments["resource"]
-    aggregation = arguments["aggregation"]
-    spec = semantic_spec(resource)
-
-    value_field = arguments["value_field"]
-    if aggregation == "count":
-        value_field = None
-    else:
-        value_field = value_field or spec.get("default_value_field")
-        if value_field not in spec["numeric_fields"]:
-            raise ValueError(
-                f"{resource}.{value_field} is not an allowed numeric metric"
-            )
-
-    rows, meta = _fetch_authorised_rows(
-        resource,
-        query=(
-            f"aggregate {aggregation} {resource} "
-            f"grouped by {arguments['group_by']}"
-        ),
-        companies=arguments["companies"],
-        statuses=arguments["statuses"],
-        is_chart=True,
-    )
-    filtered = _filter_rows(
-        rows,
-        resource=resource,
-        companies=arguments["companies"],
-        statuses=arguments["statuses"],
-        date_from=arguments["date_from"],
-        date_to=arguments["date_to"],
-    )
-
-    buckets: dict[str, dict[str, Any]] = {}
-    values: dict[str, list[float]] = defaultdict(list)
-    counts: dict[str, int] = defaultdict(int)
-
-    for row in filtered:
-        key, dimensions = _group_key(
-            row,
-            resource=resource,
-            group_by=arguments["group_by"],
-        )
-        buckets[key] = dimensions
-        counts[key] += 1
-        if value_field:
-            number = _numeric(row.get(value_field))
-            if number is not None:
-                values[key].append(number)
-
-    output_rows: list[dict[str, Any]] = []
-    for key in sorted(buckets):
-        group_values = values.get(key, [])
-        if aggregation == "count":
-            value: float | int | None = counts[key]
-        elif aggregation == "sum":
-            value = round(sum(group_values), 2)
-        elif aggregation == "average":
-            value = (
-                round(sum(group_values) / len(group_values), 2)
-                if group_values else None
-            )
-        elif aggregation == "min":
-            value = min(group_values) if group_values else None
-        elif aggregation == "max":
-            value = max(group_values) if group_values else None
-        else:
-            raise ValueError(f"Unsupported aggregation: {aggregation}")
-
-        output_rows.append(
-            {
-                **buckets[key],
-                "value": value,
-                "record_count": counts[key],
-            }
-        )
-
-    output_rows = output_rows[: min(int(arguments["limit_groups"]), 120)]
-    numeric_values = [
-        float(row["value"])
-        for row in output_rows
-        if isinstance(row.get("value"), (int, float))
-    ]
-    return {
-        "ok": True,
-        "scope": context.public_scope(),
-        "resource": resource,
-        "doctype": meta["doctype"],
-        "aggregation": aggregation,
-        "value_field": value_field,
-        "group_by": arguments["group_by"],
-        "filters": {
-            "companies": arguments["companies"],
-            "statuses": arguments["statuses"],
-            "date_from": arguments["date_from"],
-            "date_to": arguments["date_to"],
-        },
-        "authorised_rows_scanned": len(rows),
-        "matching_rows": len(filtered),
-        "group_count": len(output_rows),
-        "rows": output_rows,
-        "total_value": (
-            round(sum(numeric_values), 2)
-            if numeric_values else 0
-        ),
-        "data_source": "frappe_authorised_records",
-    }
+    return execute_native_aggregate(context, arguments)
