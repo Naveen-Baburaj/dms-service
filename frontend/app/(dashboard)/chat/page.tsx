@@ -24,6 +24,8 @@ import {
   type AgentResponse,
   type FiltersApplied,
   type AgentConversationSummary,
+  type AnalyticalViewPayload,
+  type AnalyticalMeasure,
 } from '@/services/api/aiAgent';
 import { checkGhlSession, openGhlLogin, saveRpaContact, type RpaContactPayload, type RpaSaveResult, type RpaSaveTarget } from '@/services/api/rpaGhl';
 
@@ -429,6 +431,347 @@ function RecordTableWidget({ payload }: { payload: unknown }) {
 
 
 
+function AnalyticalViewWidget({ payload }: { payload: unknown }) {
+  const p = payload as AnalyticalViewPayload;
+  const dataset = p.dataset;
+  const view = p.view;
+  const rows = dataset?.rows ?? [];
+  const dimensions = dataset?.dimensions ?? [];
+  const measures = dataset?.measures ?? [];
+  const measure =
+    measures.find((item) => item.key === view?.value_field)
+    ?? measures[0];
+  const valueField = view?.value_field ?? measure?.key;
+  const xField = view?.x_field ?? dimensions[0]?.key;
+  const seriesField = view?.series_field ?? null;
+
+  const COLORS = [
+    '#7c3aed', '#0ea5e9', '#10b981', '#f59e0b',
+    '#ef4444', '#8b5cf6', '#14b8a6', '#f97316',
+  ];
+
+  function formatValue(
+    value: unknown,
+    spec?: AnalyticalMeasure,
+  ): string {
+    const number = Number(value ?? 0);
+    if (!Number.isFinite(number)) {
+      return String(value ?? '—');
+    }
+    if (spec?.format === 'currency') {
+      return new Intl.NumberFormat('en-IN', {
+        style: 'currency',
+        currency: spec.currency ?? 'INR',
+        maximumFractionDigits: 0,
+      }).format(number);
+    }
+    if (spec?.format === 'percentage') {
+      return `${number.toFixed(1)}%`;
+    }
+    if (spec?.format === 'integer') {
+      return Math.round(number).toLocaleString('en-IN');
+    }
+    return number.toLocaleString(
+      'en-IN',
+      { maximumFractionDigits: 2 },
+    );
+  }
+
+  const columns = [...dimensions, ...measures];
+  const seriesNames = Array.from(
+    new Set(
+      rows.map((row) => String(
+        seriesField
+          ? row[seriesField] ?? 'Unknown'
+          : measure?.label ?? 'Value',
+      )),
+    ),
+  );
+
+  const chartRows = (() => {
+    if (!xField || !valueField) return [];
+    const grouped = new Map<
+      string,
+      Record<string, string | number>
+    >();
+
+    rows.forEach((row) => {
+      const xValue = String(
+        row[xField] ?? 'Unknown',
+      );
+      const seriesName = String(
+        seriesField
+          ? row[seriesField] ?? 'Unknown'
+          : measure?.label ?? 'Value',
+      );
+      const item = grouped.get(xValue) ?? {
+        __x: xValue,
+      };
+      item[seriesName] =
+        Number(item[seriesName] ?? 0)
+        + Number(row[valueField] ?? 0);
+      grouped.set(xValue, item);
+    });
+
+    return Array.from(grouped.values());
+  })();
+
+  const pieRows = (() => {
+    const categoryField =
+      xField ?? seriesField ?? dimensions[0]?.key;
+    if (!categoryField || !valueField) return [];
+
+    const grouped = new Map<string, number>();
+    rows.forEach((row) => {
+      const key = String(
+        row[categoryField] ?? 'Unknown',
+      );
+      grouped.set(
+        key,
+        (grouped.get(key) ?? 0)
+          + Number(row[valueField] ?? 0),
+      );
+    });
+    return Array.from(grouped.entries()).map(
+      ([name, value]) => ({ name, value }),
+    );
+  })();
+
+  if (!dataset || rows.length === 0) {
+    return (
+      <div className="mt-3 rounded-xl border border-border/50 bg-muted/30 p-4 text-center text-xs text-muted-foreground">
+        No rows are available in this saved analytical result.
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-3 rounded-xl border border-border/50 bg-background/60 p-4">
+      <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+            {view?.title ?? dataset.title}
+          </p>
+          <p className="mt-0.5 text-[10px] text-muted-foreground">
+            Saved result · {dataset.row_count} row(s) ·{' '}
+            {p.reused
+              ? 'reused without re-query'
+              : 'new snapshot'}
+          </p>
+        </div>
+        <span className="rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2 py-1 text-[10px] font-medium text-emerald-600">
+          Verified snapshot
+        </span>
+      </div>
+
+      {measures.length > 0 && (
+        <div className="mb-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+          {measures.map((item) => (
+            <div
+              key={item.key}
+              className="rounded-lg border border-border/40 bg-muted/20 px-3 py-2"
+            >
+              <p className="text-[10px] text-muted-foreground">
+                {item.label}
+              </p>
+              <p className="text-sm font-semibold">
+                {formatValue(
+                  dataset.totals?.[item.key],
+                  item,
+                )}
+              </p>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {view?.type === 'table' ? (
+        <div className="max-h-80 overflow-auto rounded-lg border border-border/40">
+          <table className="w-full min-w-max text-xs">
+            <thead className="sticky top-0 bg-background">
+              <tr className="border-b border-border/50">
+                {columns.map((column) => (
+                  <th
+                    key={column.key}
+                    className="px-2 py-2 text-left font-medium text-muted-foreground"
+                  >
+                    {column.label}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row, index) => (
+                <tr
+                  key={index}
+                  className="border-b border-border/30 last:border-0"
+                >
+                  {columns.map((column) => {
+                    const measureSpec = measures.find(
+                      (item) => item.key === column.key,
+                    );
+                    return (
+                      <td
+                        key={column.key}
+                        className="px-2 py-2"
+                      >
+                        {measureSpec
+                          ? formatValue(
+                              row[column.key],
+                              measureSpec,
+                            )
+                          : String(
+                              row[column.key] ?? '—',
+                            )}
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : view?.type === 'pie' ? (
+        <ResponsiveContainer width="100%" height={300}>
+          <PieChart>
+            <Pie
+              data={pieRows}
+              dataKey="value"
+              nameKey="name"
+              cx="50%"
+              cy="46%"
+              outerRadius={94}
+              innerRadius={40}
+              paddingAngle={2}
+              label={({ name, percent }) =>
+                `${name} ${(Number(percent ?? 0) * 100).toFixed(0)}%`
+              }
+            >
+              {pieRows.map((entry, index) => (
+                <Cell
+                  key={`${entry.name}-${index}`}
+                  fill={COLORS[index % COLORS.length]}
+                />
+              ))}
+            </Pie>
+            <Tooltip
+              formatter={(value: number) => [
+                formatValue(value, measure),
+                measure?.label ?? 'Value',
+              ]}
+            />
+            <Legend wrapperStyle={{ fontSize: 10 }} />
+          </PieChart>
+        </ResponsiveContainer>
+      ) : view?.type === 'bar'
+        || view?.type === 'stacked_bar' ? (
+        <ResponsiveContainer width="100%" height={300}>
+          <BarChart
+            data={chartRows}
+            margin={{
+              top: 8,
+              right: 8,
+              left: 0,
+              bottom: 8,
+            }}
+          >
+            <CartesianGrid
+              strokeDasharray="3 3"
+              stroke="hsl(var(--border))"
+            />
+            <XAxis
+              dataKey="__x"
+              tick={{ fontSize: 10 }}
+            />
+            <YAxis
+              tick={{ fontSize: 10 }}
+              tickFormatter={(value) =>
+                formatValue(value, measure)
+              }
+              width={74}
+            />
+            <Tooltip
+              formatter={(value: number) =>
+                formatValue(value, measure)
+              }
+            />
+            <Legend wrapperStyle={{ fontSize: 10 }} />
+            {seriesNames.map((name, index) => (
+              <Bar
+                key={name}
+                dataKey={name}
+                stackId={
+                  view.type === 'stacked_bar'
+                    ? 'total'
+                    : undefined
+                }
+                fill={COLORS[index % COLORS.length]}
+                radius={[4, 4, 0, 0]}
+              />
+            ))}
+          </BarChart>
+        </ResponsiveContainer>
+      ) : (
+        <ResponsiveContainer width="100%" height={300}>
+          <AreaChart
+            data={chartRows}
+            margin={{
+              top: 8,
+              right: 8,
+              left: 0,
+              bottom: 8,
+            }}
+          >
+            <CartesianGrid
+              strokeDasharray="3 3"
+              stroke="hsl(var(--border))"
+            />
+            <XAxis
+              dataKey="__x"
+              tick={{ fontSize: 10 }}
+            />
+            <YAxis
+              tick={{ fontSize: 10 }}
+              tickFormatter={(value) =>
+                formatValue(value, measure)
+              }
+              width={74}
+            />
+            <Tooltip
+              formatter={(value: number) =>
+                formatValue(value, measure)
+              }
+            />
+            <Legend wrapperStyle={{ fontSize: 10 }} />
+            {seriesNames.map((name, index) => (
+              <Area
+                key={name}
+                type="monotone"
+                dataKey={name}
+                stroke={COLORS[index % COLORS.length]}
+                fill={COLORS[index % COLORS.length]}
+                fillOpacity={
+                  view?.type === 'area'
+                    ? 0.18
+                    : 0
+                }
+                strokeWidth={2}
+                dot={{ r: 3 }}
+              />
+            ))}
+          </AreaChart>
+        </ResponsiveContainer>
+      )}
+
+      <p className="mt-2 break-all text-[9px] text-muted-foreground/70">
+        Snapshot {p.snapshot_id} · Source{' '}
+        {p.source_hash.slice(0, 12)}
+      </p>
+    </div>
+  );
+}
+
+
 function GenericChartsWidget({ payload }: { payload: unknown }) {
   const p = payload as GenericChartsPayload;
   const charts = p.charts ?? [];
@@ -648,6 +991,7 @@ function InlineWidgets({ agentData }: { agentData: AgentResponse }) {
         if (widgetId === 'inventory_table') return <InventoryTableWidget key={widgetId} payload={payload} />;
         if (widgetId === 'tenant_comparison_chart') return <TenantComparisonWidget key={widgetId} payload={payload} />;
         if (widgetId === 'record_table') return <RecordTableWidget key={widgetId} payload={payload} />;
+        if (widgetId === 'analytical_view') return <AnalyticalViewWidget key={widgetId} payload={payload} />;
         if (widgetId === 'generic_charts') return <GenericChartsWidget key={widgetId} payload={payload} />;
         return null;
       })}

@@ -258,6 +258,7 @@ def _run_tool_loop(
         }
     ]
     trace: list[dict[str, Any]] = []
+    tool_results: list[dict[str, Any]] = []
     request_ids: list[str] = []
     total_tool_calls = 0
 
@@ -352,6 +353,13 @@ def _run_tool_loop(
 
                 tool_trace["step"] = step
                 trace.append(tool_trace)
+                tool_results.append(
+                    {
+                        "tool": call["name"],
+                        "arguments": arguments,
+                        "output": tool_payload,
+                    }
+                )
                 history.append(
                     {
                         "type": "function_call_output",
@@ -383,6 +391,7 @@ def _run_tool_loop(
         parsed["_agentic_tool_calls"] = total_tool_calls
         parsed["_agentic_trace"] = trace
         parsed["_agentic_request_ids"] = request_ids
+        parsed["_agentic_tool_results"] = tool_results
         return parsed
 
     raise RuntimeError(

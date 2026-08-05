@@ -13,6 +13,50 @@ export interface FiltersApplied {
   other?: Record<string, unknown> | null;
 }
 
+export interface AnalyticalDimension {
+  key: string;
+  label: string;
+  type: 'category' | 'date' | 'datetime' | 'text';
+}
+
+export interface AnalyticalMeasure {
+  key: string;
+  label: string;
+  format: 'integer' | 'decimal' | 'currency' | 'percentage';
+  currency?: string;
+}
+
+export interface AnalyticalDataset {
+  schema_version: number;
+  resource: string;
+  title: string;
+  dimensions: AnalyticalDimension[];
+  measures: AnalyticalMeasure[];
+  rows: Array<Record<string, string | number | boolean | null>>;
+  totals: Record<string, number | null>;
+  filters: Record<string, unknown>;
+  row_count: number;
+}
+
+export interface AnalyticalViewSpec {
+  type: 'table' | 'bar' | 'line' | 'pie' | 'area' | 'stacked_bar';
+  x_field?: string | null;
+  series_field?: string | null;
+  value_field?: string | null;
+  title: string;
+}
+
+export interface AnalyticalViewPayload {
+  snapshot_id: string;
+  source_hash: string;
+  title: string;
+  resource: string;
+  dataset: AnalyticalDataset;
+  view: AnalyticalViewSpec;
+  reused: boolean;
+  data_source: string;
+}
+
 export interface AgentResponse {
   intent: string;
   filters_applied: FiltersApplied;
@@ -23,6 +67,8 @@ export interface AgentResponse {
   conversation_id?: string;
   conversation_title?: string;
   memory_summary?: string;
+  active_snapshot_id?: string;
+  snapshot_source_hash?: string;
 }
 
 export interface AgentConversationSummary {

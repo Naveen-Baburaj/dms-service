@@ -40,3 +40,5 @@ ghl_storage_state.json
 
 .env
 backend/.env
+# TypeScript incremental build cache
+*.tsbuildinfo

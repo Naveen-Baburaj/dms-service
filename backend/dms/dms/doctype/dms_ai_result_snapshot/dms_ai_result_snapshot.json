@@ -1,0 +1,191 @@
+{
+  "name": "DMS AI Result Snapshot",
+  "module": "DMS",
+  "doctype": "DocType",
+  "custom": 0,
+  "istable": 0,
+  "editable_grid": 1,
+  "allow_rename": 0,
+  "autoname": "hash",
+  "is_submittable": 0,
+  "track_changes": 0,
+  "sort_field": "creation",
+  "sort_order": "DESC",
+  "fields": [
+    {
+      "fieldname": "conversation_id",
+      "fieldtype": "Link",
+      "options": "DMS AI Conversation",
+      "label": "Conversation",
+      "reqd": 1,
+      "read_only": 1,
+      "in_list_view": 1
+    },
+    {
+      "fieldname": "owner_key",
+      "fieldtype": "Data",
+      "label": "Owner Key",
+      "reqd": 1,
+      "read_only": 1
+    },
+    {
+      "fieldname": "scope_key",
+      "fieldtype": "Data",
+      "label": "Scope Key",
+      "reqd": 1,
+      "read_only": 1
+    },
+    {
+      "fieldname": "company_id",
+      "fieldtype": "Data",
+      "label": "Company ID",
+      "read_only": 1
+    },
+    {
+      "fieldname": "company_name",
+      "fieldtype": "Data",
+      "label": "Company Name",
+      "read_only": 1
+    },
+    {
+      "fieldname": "resource",
+      "fieldtype": "Data",
+      "label": "Resource",
+      "reqd": 1,
+      "read_only": 1,
+      "in_list_view": 1
+    },
+    {
+      "fieldname": "title",
+      "fieldtype": "Data",
+      "label": "Title",
+      "reqd": 1,
+      "read_only": 1,
+      "in_list_view": 1
+    },
+    {
+      "fieldname": "dataset_json",
+      "fieldtype": "Long Text",
+      "label": "Dataset JSON",
+      "reqd": 1,
+      "read_only": 1
+    },
+    {
+      "fieldname": "dimensions_json",
+      "fieldtype": "Long Text",
+      "label": "Dimensions JSON",
+      "read_only": 1
+    },
+    {
+      "fieldname": "measures_json",
+      "fieldtype": "Long Text",
+      "label": "Measures JSON",
+      "read_only": 1
+    },
+    {
+      "fieldname": "filters_json",
+      "fieldtype": "Long Text",
+      "label": "Filters JSON",
+      "read_only": 1
+    },
+    {
+      "fieldname": "totals_json",
+      "fieldtype": "Long Text",
+      "label": "Totals JSON",
+      "read_only": 1
+    },
+    {
+      "fieldname": "presentation_json",
+      "fieldtype": "Long Text",
+      "label": "Presentation JSON",
+      "read_only": 1
+    },
+    {
+      "fieldname": "source_tool_names_json",
+      "fieldtype": "Long Text",
+      "label": "Source Tools JSON",
+      "read_only": 1
+    },
+    {
+      "fieldname": "source_hash",
+      "fieldtype": "Data",
+      "label": "Source Hash",
+      "reqd": 1,
+      "read_only": 1,
+      "in_list_view": 1
+    },
+    {
+      "fieldname": "row_count",
+      "fieldtype": "Int",
+      "label": "Row Count",
+      "default": "0",
+      "read_only": 1
+    },
+    {
+      "fieldname": "created_from_message",
+      "fieldtype": "Link",
+      "options": "DMS AI Message",
+      "label": "Created From Message",
+      "read_only": 1
+    },
+    {
+      "fieldname": "status",
+      "fieldtype": "Select",
+      "label": "Status",
+      "options": "Active\nArchived\nExpired",
+      "default": "Active",
+      "in_list_view": 1
+    },
+    {
+      "fieldname": "expires_at",
+      "fieldtype": "Datetime",
+      "label": "Expires At",
+      "read_only": 1
+    }
+  ],
+  "permissions": [
+    {
+      "role": "Group Admin",
+      "read": 1,
+      "write": 1,
+      "create": 1,
+      "delete": 1
+    },
+    {
+      "role": "Honda Manager",
+      "read": 1,
+      "write": 1,
+      "create": 1
+    },
+    {
+      "role": "Honda User",
+      "read": 1,
+      "write": 1,
+      "create": 1
+    },
+    {
+      "role": "NEXA Manager",
+      "read": 1,
+      "write": 1,
+      "create": 1
+    },
+    {
+      "role": "NEXA User",
+      "read": 1,
+      "write": 1,
+      "create": 1
+    },
+    {
+      "role": "Jaguar Manager",
+      "read": 1,
+      "write": 1,
+      "create": 1
+    },
+    {
+      "role": "Jaguar User",
+      "read": 1,
+      "write": 1,
+      "create": 1
+    }
+  ]
+}

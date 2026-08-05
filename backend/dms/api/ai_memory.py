@@ -105,7 +105,13 @@ def _default_memory_state() -> dict[str, Any]:
         "chart_type": "none",
         "last_user_goal": "",
         "unresolved_references": [],
+        "active_snapshot_id": None,
+        "active_dataset_title": None,
+        "active_dimensions": [],
+        "active_measures": [],
+        "presentation_type": "none",
     }
+
 
 
 def _get_conversation(conversation_id: str, *, required: bool = True):
@@ -866,6 +872,163 @@ def _attach_agentic_plan_metadata(
     )
 
 
+def _apply_snapshot_memory(
+    plan: dict[str, Any],
+    snapshot: dict[str, Any],
+    view: dict[str, Any],
+) -> None:
+    memory = plan.get("memory")
+    if not isinstance(memory, dict):
+        memory = _default_memory_state()
+
+    dataset = snapshot.get("dataset") or {}
+    dimensions = (
+        dataset.get("dimensions") or []
+    )
+    measures = dataset.get("measures") or []
+    presentation_type = str(
+        view.get("type") or "table"
+    )
+
+    memory["active_snapshot_id"] = (
+        snapshot.get("id")
+    )
+    memory["active_dataset_title"] = (
+        dataset.get("title")
+    )
+    memory["active_dimensions"] = [
+        item.get("key")
+        for item in dimensions
+        if (
+            isinstance(item, dict)
+            and item.get("key")
+        )
+    ]
+    memory["active_measures"] = [
+        item.get("key")
+        for item in measures
+        if (
+            isinstance(item, dict)
+            and item.get("key")
+        )
+    ]
+    memory["presentation_type"] = (
+        presentation_type
+    )
+    memory["chart_type"] = {
+        "area": "line",
+        "stacked_bar": "bar",
+    }.get(
+        presentation_type,
+        presentation_type,
+    )
+    memory["active_resource"] = (
+        dataset.get("resource")
+    )
+    plan["memory"] = memory
+
+
+def _update_conversation_from_snapshot(
+    conversation_doc,
+    snapshot: dict[str, Any],
+    view: dict[str, Any],
+    user_query: str,
+) -> None:
+    state = _conversation_memory(
+        conversation_doc
+    )["state"]
+    dataset = snapshot.get("dataset") or {}
+    dimensions = (
+        dataset.get("dimensions") or []
+    )
+    measures = dataset.get("measures") or []
+    presentation_type = str(
+        view.get("type") or "table"
+    )
+
+    state["active_snapshot_id"] = (
+        snapshot.get("id")
+    )
+    state["active_dataset_title"] = (
+        dataset.get("title")
+    )
+    state["active_dimensions"] = [
+        item.get("key")
+        for item in dimensions
+        if (
+            isinstance(item, dict)
+            and item.get("key")
+        )
+    ]
+    state["active_measures"] = [
+        item.get("key")
+        for item in measures
+        if (
+            isinstance(item, dict)
+            and item.get("key")
+        )
+    ]
+    state["presentation_type"] = (
+        presentation_type
+    )
+    state["chart_type"] = {
+        "area": "line",
+        "stacked_bar": "bar",
+    }.get(
+        presentation_type,
+        presentation_type,
+    )
+    state["active_resource"] = (
+        dataset.get("resource")
+    )
+    state["last_user_goal"] = str(
+        user_query or ""
+    )[:500]
+
+    conversation_doc.memory_state_json = (
+        json.dumps(
+            state,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+    )
+    conversation_doc.last_intent = (
+        "snapshot_presentation"
+    )
+    conversation_doc.last_resource = str(
+        dataset.get("resource") or ""
+    )[:140]
+    conversation_doc.last_message_at = (
+        now_datetime()
+    )
+    conversation_doc.save(
+        ignore_permissions=True
+    )
+
+
+def _clear_inactive_snapshot_memory(
+    conversation_doc,
+) -> None:
+    state = _conversation_memory(
+        conversation_doc
+    )["state"]
+    state["active_snapshot_id"] = None
+    state["active_dataset_title"] = None
+    state["active_dimensions"] = []
+    state["active_measures"] = []
+    state["presentation_type"] = "none"
+    conversation_doc.memory_state_json = (
+        json.dumps(
+            state,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+    )
+    conversation_doc.save(
+        ignore_permissions=True
+    )
+
+
 def _message_agent_data(value: str | None) -> dict[str, Any] | None:
     parsed = _safe_json_loads(value, None)
     return parsed if isinstance(parsed, dict) else None
@@ -920,36 +1083,106 @@ def _sanitise_title(value: str | None) -> str:
     return title[:120] or DEFAULT_TITLE
 
 
-def _normalise_memory(plan: dict[str, Any]) -> dict[str, Any]:
+def _normalise_memory(
+    plan: dict[str, Any],
+) -> dict[str, Any]:
     memory = plan.get("memory")
     if not isinstance(memory, dict):
         memory = _default_memory_state()
 
+    chart_type = str(
+        memory.get("chart_type") or "none"
+    )
+    if chart_type not in {
+        "none",
+        "table",
+        "bar",
+        "line",
+        "pie",
+    }:
+        chart_type = "none"
+
+    presentation_type = str(
+        memory.get("presentation_type")
+        or chart_type
+    )
+    if presentation_type not in {
+        "none",
+        "table",
+        "bar",
+        "line",
+        "pie",
+        "area",
+        "stacked_bar",
+    }:
+        presentation_type = "none"
+
+    active_snapshot_id = str(
+        memory.get("active_snapshot_id") or ""
+    ).strip()[:140]
+    active_dataset_title = str(
+        memory.get("active_dataset_title") or ""
+    ).strip()[:240]
+
     return {
-        "summary": str(memory.get("summary") or "").strip()[
-            :MAX_MEMORY_SUMMARY_CHARS
-        ],
-        "active_resource": memory.get("active_resource"),
+        "summary": str(
+            memory.get("summary") or ""
+        ).strip()[:MAX_MEMORY_SUMMARY_CHARS],
+        "active_resource": memory.get(
+            "active_resource"
+        ),
         "companies": [
             str(item)
-            for item in (memory.get("companies") or [])
+            for item in (
+                memory.get("companies") or []
+            )
             if item
         ][:10],
         "time_range": memory.get("time_range"),
         "metric": memory.get("metric"),
-        "chart_type": (
-            memory.get("chart_type")
-            if memory.get("chart_type")
-            in {"none", "table", "bar", "line", "pie"}
-            else "none"
-        ),
-        "last_user_goal": str(memory.get("last_user_goal") or "")[:500],
+        "chart_type": chart_type,
+        "last_user_goal": str(
+            memory.get("last_user_goal") or ""
+        )[:500],
         "unresolved_references": [
             str(item)[:300]
-            for item in (memory.get("unresolved_references") or [])
+            for item in (
+                memory.get(
+                    "unresolved_references"
+                )
+                or []
+            )
             if item
         ][:10],
+        "active_snapshot_id": (
+            active_snapshot_id or None
+        ),
+        "active_dataset_title": (
+            active_dataset_title or None
+        ),
+        "active_dimensions": [
+            str(item)[:140]
+            for item in (
+                memory.get(
+                    "active_dimensions"
+                )
+                or []
+            )
+            if item
+        ][:20],
+        "active_measures": [
+            str(item)[:140]
+            for item in (
+                memory.get(
+                    "active_measures"
+                )
+                or []
+            )
+            if item
+        ][:20],
+        "presentation_type": presentation_type,
     }
+
 
 
 def _update_conversation_from_plan(conversation_doc, plan: dict[str, Any]):
@@ -1119,17 +1352,40 @@ def get_conversation(conversation_id: str | None = None):
     )
 
 
-def archive_conversation(conversation_id: str | None = None):
+def archive_conversation(
+    conversation_id: str | None = None,
+):
     payload = _request_payload()
     conversation_id = (
         conversation_id
         or payload.get("conversation_id")
         or payload.get("id")
     )
-    doc = _get_conversation(str(conversation_id or ""))
+    doc = _get_conversation(
+        str(conversation_id or "")
+    )
     doc.status = "Archived"
     doc.save(ignore_permissions=True)
-    return _base().success(data={"id": doc.name, "status": "Archived"})
+
+    from dms.agent.result_store import (
+        archive_snapshots_for_conversation,
+    )
+
+    archived_snapshots = (
+        archive_snapshots_for_conversation(
+            doc
+        )
+    )
+    return _base().success(
+        data={
+            "id": doc.name,
+            "status": "Archived",
+            "archived_snapshots": (
+                archived_snapshots
+            ),
+        }
+    )
+
 
 
 def query_with_memory(
@@ -1138,7 +1394,9 @@ def query_with_memory(
     **kwargs,
 ):
     base = _base()
-    provider, _api_key, model = base._data_agent_provider_config()
+    provider, _api_key, model = (
+        base._data_agent_provider_config()
+    )
 
     payload = _request_payload()
     payload.update(kwargs or {})
@@ -1164,17 +1422,26 @@ def query_with_memory(
             company_id=None,
             company_name=None,
             widgets_to_show=[],
-            text_response="Please ask a DMS data question.",
+            text_response=(
+                "Please ask a DMS data question."
+            ),
             widget_payloads={},
-            other={"answer_type": "empty_query"},
+            other={
+                "answer_type": "empty_query"
+            },
         )
         return base.success(data=data)
 
     if provider != "openai":
         data = base._data_agent_llm_error(
             {
-                "_llm_status": "unsupported_provider",
-                "_llm_error": "The mandatory LLM provider must be OpenAI.",
+                "_llm_status": (
+                    "unsupported_provider"
+                ),
+                "_llm_error": (
+                    "The mandatory LLM provider "
+                    "must be OpenAI."
+                ),
                 "_llm_provider": provider,
                 "_llm_model": model,
             },
@@ -1188,20 +1455,116 @@ def query_with_memory(
         else _create_conversation()
     )
 
-    _save_message(conversation_doc, role="user", content=user_query)
+    _save_message(
+        conversation_doc,
+        role="user",
+        content=user_query,
+    )
 
-    denial = base._data_agent_cross_tenant_denial(user_query)
+    denial = (
+        base._data_agent_cross_tenant_denial(
+            user_query
+        )
+    )
     if denial:
-        denial = _attach_conversation_metadata(denial, conversation_doc)
+        denial = _attach_conversation_metadata(
+            denial,
+            conversation_doc,
+        )
         _save_message(
             conversation_doc,
             role="assistant",
-            content=denial.get("text_response") or "",
+            content=(
+                denial.get("text_response")
+                or ""
+            ),
             agent_data=denial,
             intent=denial.get("intent"),
         )
-        denial = _attach_conversation_metadata(denial, conversation_doc)
+        denial = _attach_conversation_metadata(
+            denial,
+            conversation_doc,
+        )
         return base.success(data=denial)
+
+    from dms.agent.presentation import (
+        attach_snapshot_to_response,
+        detect_presentation_request,
+        render_snapshot_response,
+        select_snapshot_view,
+    )
+    from dms.agent.result_store import (
+        create_snapshot_from_tool_results,
+        link_snapshot_to_message,
+        load_snapshot,
+    )
+
+    presentation_request = (
+        detect_presentation_request(
+            user_query
+        )
+    )
+    current_memory = _conversation_memory(
+        conversation_doc
+    )["state"]
+    active_snapshot_id = str(
+        current_memory.get(
+            "active_snapshot_id"
+        )
+        or ""
+    ).strip()
+
+    if (
+        presentation_request
+        and active_snapshot_id
+    ):
+        try:
+            snapshot = load_snapshot(
+                active_snapshot_id,
+                conversation_doc,
+            )
+        except frappe.DoesNotExistError:
+            _clear_inactive_snapshot_memory(
+                conversation_doc
+            )
+        else:
+            data, view = (
+                render_snapshot_response(
+                    snapshot,
+                    user_query,
+                    presentation_request,
+                )
+            )
+            _update_conversation_from_snapshot(
+                conversation_doc,
+                snapshot,
+                view,
+                user_query,
+            )
+            data = (
+                _attach_conversation_metadata(
+                    data,
+                    conversation_doc,
+                )
+            )
+            _save_message(
+                conversation_doc,
+                role="assistant",
+                content=(
+                    data.get("text_response")
+                    or ""
+                ),
+                agent_data=data,
+                intent=data.get("intent"),
+            )
+            conversation_doc.reload()
+            data = (
+                _attach_conversation_metadata(
+                    data,
+                    conversation_doc,
+                )
+            )
+            return base.success(data=data)
 
     (
         llm_pack,
@@ -1212,54 +1575,179 @@ def query_with_memory(
         user_query,
         conversation_doc,
     )
-    plan = _call_openai(user_query, memory_context, llm_pack)
+    plan = _call_openai(
+        user_query,
+        memory_context,
+        llm_pack,
+    )
 
     if plan.get("_llm_status") != "ok":
-        data = base._data_agent_llm_error(plan, user_query)
-        other = data["filters_applied"]["other"]
-        other["rag_mode"] = "ultra_compact_structured_rag"
-        other["memory_context_mode"] = "summary_only"
-        other["rag_context_chars"] = llm_pack.get("_debug_context_chars")
-        other["rag_resources"] = list(
-            (llm_pack.get("resources") or {}).keys()
+        data = base._data_agent_llm_error(
+            plan,
+            user_query,
         )
-        _attach_agentic_plan_metadata(other, plan)
+        other = data[
+            "filters_applied"
+        ]["other"]
+        other["rag_mode"] = (
+            "ultra_compact_structured_rag"
+        )
+        other["memory_context_mode"] = (
+            "summary_only"
+        )
+        other["rag_context_chars"] = (
+            llm_pack.get(
+                "_debug_context_chars"
+            )
+        )
+        other["rag_resources"] = list(
+            (
+                llm_pack.get("resources")
+                or {}
+            ).keys()
+        )
+        _attach_agentic_plan_metadata(
+            other,
+            plan,
+        )
 
-        data = _attach_conversation_metadata(data, conversation_doc)
+        data = _attach_conversation_metadata(
+            data,
+            conversation_doc,
+        )
         _save_message(
             conversation_doc,
             role="assistant",
-            content=data.get("text_response") or "",
+            content=(
+                data.get("text_response")
+                or ""
+            ),
             agent_data=data,
             intent=data.get("intent"),
-            response_id=plan.get("_openai_response_id"),
+            response_id=plan.get(
+                "_openai_response_id"
+            ),
             is_error=True,
         )
-        data = _attach_conversation_metadata(data, conversation_doc)
+        data = _attach_conversation_metadata(
+            data,
+            conversation_doc,
+        )
         return base.success(data=data)
 
-    data = base._data_agent_response(plan, execution_pack, user_query)
-    other = data["filters_applied"]["other"]
-    other["rag_mode"] = "ultra_compact_structured_rag"
-    other["memory_context_mode"] = "summary_only"
-    other["rag_context_chars"] = llm_pack.get("_debug_context_chars")
-    other["rag_resources"] = list(
-        (llm_pack.get("resources") or {}).keys()
+    tool_results = plan.pop(
+        "_agentic_tool_results",
+        [],
     )
-    _attach_agentic_plan_metadata(other, plan)
+    snapshot = None
+    snapshot_view = None
+    snapshot_error = None
 
-    _update_conversation_from_plan(conversation_doc, plan)
-    data = _attach_conversation_metadata(data, conversation_doc)
+    if tool_results:
+        try:
+            snapshot = (
+                create_snapshot_from_tool_results(
+                    conversation_doc,
+                    plan,
+                    tool_results,
+                )
+            )
+            if snapshot:
+                snapshot_view = (
+                    select_snapshot_view(
+                        snapshot,
+                        user_query,
+                        plan=plan,
+                    )
+                )
+                _apply_snapshot_memory(
+                    plan,
+                    snapshot,
+                    snapshot_view,
+                )
+        except Exception as exc:
+            snapshot_error = (
+                f"{type(exc).__name__}: "
+                f"{str(exc)[:1000]}"
+            )
 
-    _save_message(
+    data = base._data_agent_response(
+        plan,
+        execution_pack,
+        user_query,
+    )
+    if snapshot and snapshot_view:
+        data = attach_snapshot_to_response(
+            data,
+            snapshot,
+            snapshot_view,
+            reused=False,
+        )
+
+    other = data["filters_applied"]["other"]
+    other["rag_mode"] = (
+        "ultra_compact_structured_rag"
+    )
+    other["memory_context_mode"] = (
+        "summary_only"
+    )
+    other["rag_context_chars"] = (
+        llm_pack.get(
+            "_debug_context_chars"
+        )
+    )
+    other["rag_resources"] = list(
+        (
+            llm_pack.get("resources")
+            or {}
+        ).keys()
+    )
+    other["snapshot_error"] = (
+        snapshot_error
+    )
+    _attach_agentic_plan_metadata(
+        other,
+        plan,
+    )
+
+    _update_conversation_from_plan(
+        conversation_doc,
+        plan,
+    )
+    data = _attach_conversation_metadata(
+        data,
+        conversation_doc,
+    )
+
+    assistant_message = _save_message(
         conversation_doc,
         role="assistant",
-        content=data.get("text_response") or "",
+        content=(
+            data.get("text_response") or ""
+        ),
         agent_data=data,
         intent=data.get("intent"),
-        response_id=plan.get("_openai_response_id"),
+        response_id=plan.get(
+            "_openai_response_id"
+        ),
     )
 
+    if snapshot:
+        try:
+            link_snapshot_to_message(
+                snapshot["id"],
+                assistant_message.name,
+                conversation_doc,
+            )
+        except Exception as exc:
+            other["snapshot_link_error"] = (
+                f"{type(exc).__name__}: "
+                f"{str(exc)[:500]}"
+            )
+
     conversation_doc.reload()
-    data = _attach_conversation_metadata(data, conversation_doc)
+    data = _attach_conversation_metadata(
+        data,
+        conversation_doc,
+    )
     return base.success(data=data)
