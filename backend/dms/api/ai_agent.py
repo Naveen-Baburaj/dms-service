@@ -5,7 +5,7 @@ Endpoint:
 POST /api/method/dms.api.ai_agent.query
 
 Design:
-- Gemini is used as the semantic router/planner.
+- OpenAI is used as the semantic router/planner.
 - Tenant security is deterministic and enforced before data access.
 - Database access is metadata-safe: only real DocType fields are selected.
 - The same Frappe DocType data used by dashboard pages is used by chat widgets.
@@ -37,14 +37,6 @@ ALL_WIDGETS = [
     "record_table",
     "generic_charts",
 ]
-
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
-ENABLE_GEMINI_INTENT = os.getenv("ENABLE_GEMINI_INTENT", "true").lower() in {
-    "1",
-    "true",
-    "yes",
-    "on",
-}
 
 VALID_INTENTS = {
     "sales_analysis",
@@ -463,93 +455,11 @@ def _routing_query(user_query: str, conversation_context: str | None) -> str:
 
 
 @lru_cache(maxsize=256)
+@lru_cache(maxsize=256)
 def _llm_smart_route(query: str) -> dict[str, Any]:
-    if not ENABLE_GEMINI_INTENT:
-        return {}
+    """Compatibility entry point backed exclusively by OpenAI."""
+    return _openai_gpt54mini_route(query)
 
-    api_key = os.getenv("GEMINI_API_KEY") or frappe.conf.get("gemini_api_key") or frappe.conf.get("GEMINI_API_KEY")
-    if not api_key:
-        return {}
-
-    try:
-        from google import genai
-        from google.genai import types
-    except Exception:
-        return {}
-
-    prompt = f"""
-You are the semantic router for a Dealer Management System dashboard chatbot.
-
-Return only JSON. No markdown.
-
-Supported intents:
-- record_lookup: rows/details/list/search from database tables
-- dashboard_charts: charts, graphs, widgets, visualizations, available charts
-- tenant_comparison: comparison between companies
-- sales_analysis
-- service_analysis
-- inventory_analysis
-- knowledge_lookup
-- out_of_scope
-
-Supported resources:
-- leads
-- customers
-- sales
-- bookings
-- test_drives
-- service_jobs
-- invoices
-- vehicles
-
-Extract:
-- intent
-- resource
-- companies: array of Honda, NEXA, Jaguar
-- month_limit: integer or null
-- search_text: customer/person/model/search phrase or null
-- wants_all_charts: boolean
-- confidence: 0 to 1
-
-Examples:
-- "invoice for diya kuiren" -> record_lookup, invoices, search_text "diya kuiren"
-- "show invoice of arjun pillai" -> record_lookup, invoices, search_text "arjun pillai"
-- "compare sales of honda and nexa" -> tenant_comparison, companies ["Honda", "NEXA"]
-- "show all charts we have with last 4 months" -> dashboard_charts, wants_all_charts true, month_limit 4
-- "list the leads" -> record_lookup, leads
-- "show only nexa sales chart" -> sales_analysis, companies ["NEXA"]
-
-User query:
-{query}
-""".strip()
-
-    schema = {
-        "type": "object",
-        "properties": {
-            "intent": {"type": "string"},
-            "resource": {"type": "string", "nullable": True},
-            "companies": {"type": "array", "items": {"type": "string"}},
-            "month_limit": {"type": "integer", "nullable": True},
-            "search_text": {"type": "string", "nullable": True},
-            "wants_all_charts": {"type": "boolean"},
-            "confidence": {"type": "number"},
-        },
-        "required": ["intent"],
-    }
-
-    try:
-        client = genai.Client(api_key=api_key)
-        response = client.models.generate_content(
-            model=GEMINI_MODEL,
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                response_mime_type="application/json",
-                response_schema=schema,
-            ),
-        )
-        return _safe_json_loads(getattr(response, "text", None))
-    except Exception:
-        return {}
 
 
 def _rule_based_detect_intent(query: str) -> str:
@@ -1305,7 +1215,7 @@ def _final_company_only_followup_query_v2(user_query: str, conversation_context:
       query:   for jaguar
       output:  sales for Jaguar over the last 5 months
 
-    This runs before Gemini routing, so Gemini receives a complete query instead
+    This runs before OpenAI routing, so OpenAI receives a complete query instead
     of a fragment like "for jaguar".
     """
     if not conversation_context:
@@ -1409,166 +1319,9 @@ def _routing_query(user_query: str, conversation_context: str | None) -> str:
 
 
 def _final_llm_route(query: str) -> dict[str, Any]:
-    if not ENABLE_GEMINI_INTENT:
-        return {
-            "_llm_status": "disabled",
-            "_llm_error": "ENABLE_GEMINI_INTENT is false",
-        }
+    """Mandatory OpenAI planner used by legacy-compatible query paths."""
+    return _openai_gpt54mini_route(query)
 
-    api_key = os.getenv("GEMINI_API_KEY") or frappe.conf.get("gemini_api_key") or frappe.conf.get("GEMINI_API_KEY")
-    if not api_key:
-        return {
-            "_llm_status": "missing_api_key",
-            "_llm_error": "GEMINI_API_KEY/gemini_api_key not found in environment or site config",
-        }
-
-    try:
-        from google import genai
-        from google.genai import types
-    except Exception as exc:
-        return {
-            "_llm_status": "import_failed",
-            "_llm_error": str(exc)[:500],
-        }
-
-    prompt = f"""
-You are the PRIMARY semantic planner for a Dealer Management System chatbot.
-
-Return only JSON. No markdown.
-
-The user may ask for:
-- KPI summaries
-- charts/widgets
-- tenant/company comparisons
-- table/list/detail lookups
-- specific fields like phone number, email, status, vehicle, amount, invoice, tenant/company
-- follow-up questions using prior context
-
-The backend will enforce tenant permissions and safely query the database.
-You do not authorize access. You only plan the data operation.
-
-Supported intents:
-- record_lookup
-- dashboard_charts
-- tenant_comparison
-- sales_analysis
-- service_analysis
-- inventory_analysis
-- knowledge_lookup
-- out_of_scope
-
-Supported resources:
-- leads
-- customers
-- sales
-- bookings
-- test_drives
-- service_jobs
-- invoices
-- vehicles
-
-Available companies:
-- Honda
-- NEXA
-- Jaguar
-
-Return these fields:
-- intent: one supported intent
-- resource: one supported resource or null
-- companies: array using Honda, NEXA, Jaguar only
-- month_limit: integer or null
-- search_text: person/customer/model/invoice/search phrase or null
-- requested_fields: array of fields the user wants, such as mobile_no, email, company_name, status, model, final_price, total_amount
-- pagination_action: first, next, remaining, or null
-- wants_all_charts: boolean
-- confidence: number from 0 to 1
-
-Decision rules:
-- For every valid DMS question, choose the closest database-backed intent. Do not return out_of_scope for DMS data questions.
-- Distinguish sales revenue from vehicle sales count.
-- "number of vehicles sold", "how many cars sold", "number of Honda sold", "Honda sold last month", and "number of sales in last 3 months" mean vehicle sales count from DMS Vehicle Sale.
-- For vehicle sales count questions, use intent sales_analysis, resource sales, and requested_fields ["count"].
-- For "total sales", "sales revenue", "sales amount", "how much sales", and "income", use sales revenue from final_price.
-- If the user asks a KPI over multiple months, such as "last 3 months", prefer a chart-capable response by setting month_limit correctly.
-- If the user asks a single company question, include that company in companies.
-- If the user asks multi-company comparison, use tenant_comparison.
-- Tenant permission is not decided by you. The backend enforces authorised scope after your plan.
-- Use record_lookup only when the user asks for table/list/records/details OR asks for a specific field about a person/customer/lead/invoice/vehicle.
-- "what is the phone number of John Kurien" is record_lookup, resource customers, search_text "John Kurien", requested_fields ["mobile_no", "company_name", "email", "status"].
-- "show contact details of John Kurien" is record_lookup, resource customers, search_text "John Kurien", requested_fields ["mobile_no", "email", "company_name", "status"].
-- "which tenant customer is John Kurien" is record_lookup, resource customers, search_text "John Kurien", requested_fields ["company_name", "mobile_no", "email", "status"].
-- "email of Diya Kuiren" is record_lookup, resource customers, search_text "Diya Kuiren", requested_fields ["email", "mobile_no", "company_name"].
-- "invoice for Arjun Pillai" is record_lookup, resource invoices, search_text "Arjun Pillai".
-- "show all sales records" is record_lookup, resource sales.
-- "sales for honda and nexa" is tenant_comparison, companies ["Honda","NEXA"].
-- "sales in last 5 months for honda and nexa" is tenant_comparison, companies ["Honda","NEXA"], month_limit 5.
-- "show nexa sales chart for last 5 months" is sales_analysis, companies ["NEXA"], month_limit 5.
-- "what was the sales in the last 5 months" is sales_analysis, not record_lookup.
-- "show all charts we have with last 4 months" is dashboard_charts, wants_all_charts true, month_limit 4.
-- A single-company metric question should become the relevant analysis intent with that company in companies.
-- A multi-company sales metric question should become tenant_comparison.
-- Do not return out_of_scope for valid DMS data questions.
-
-User query:
-{query}
-""".strip()
-
-    schema = {
-        "type": "object",
-        "properties": {
-            "intent": {"type": "string"},
-            "resource": {"type": "string", "nullable": True},
-            "companies": {"type": "array", "items": {"type": "string"}},
-            "month_limit": {"type": "integer", "nullable": True},
-            "search_text": {"type": "string", "nullable": True},
-            "requested_fields": {"type": "array", "items": {"type": "string"}},
-            "pagination_action": {"type": "string", "nullable": True},
-            "wants_all_charts": {"type": "boolean"},
-            "confidence": {"type": "number"},
-        },
-        "required": ["intent"],
-    }
-
-    try:
-        client = genai.Client(api_key=api_key)
-        response = client.models.generate_content(
-            model=GEMINI_MODEL,
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                response_mime_type="application/json",
-                response_schema=schema,
-            ),
-        )
-
-        parsed = _safe_json_loads(getattr(response, "text", None))
-        if not isinstance(parsed, dict):
-            return {
-                "_llm_status": "invalid_response",
-                "_llm_error": "Gemini returned non-dict response",
-            }
-
-        if parsed.get("intent") not in VALID_INTENTS:
-            return {
-                "_llm_status": "invalid_intent",
-                "_llm_error": f"Invalid intent from Gemini: {parsed.get('intent')}",
-                "_raw_route": parsed,
-            }
-
-        if not isinstance(parsed.get("companies"), list):
-            parsed["companies"] = []
-
-        if not isinstance(parsed.get("requested_fields"), list):
-            parsed["requested_fields"] = []
-
-        parsed["_llm_status"] = "ok"
-        parsed["_llm_error"] = None
-        return parsed
-
-    except Exception as exc:
-        return {
-            "_llm_status": "call_failed",
-            "_llm_error": str(exc)[:500],
-        }
 
 
 def _final_company_mentions(query: str) -> list[str]:
@@ -1655,7 +1408,7 @@ def _final_metric_summary_intent(query: str, route: dict[str, Any] | None = None
 
 
 def _final_route_companies(query: str, route: dict[str, Any] | None = None) -> list[str]:
-    """Return tenant/company names detected by Gemini and deterministic aliases."""
+    """Return tenant/company names detected by OpenAI and deterministic aliases."""
     companies: list[str] = []
 
     if route and isinstance(route.get("companies"), list):
@@ -1708,9 +1461,9 @@ def _final_explicit_record_lookup_query(query: str, route: dict[str, Any] | None
 
 
 def _final_intelligent_intent(query: str, route: dict[str, Any] | None = None) -> str | None:
-    """Deterministic guardrail over Gemini/rule routing.
+    """Deterministic guardrail over OpenAI/rule routing.
 
-    Gemini is still used when configured, but this guardrail prevents common DMS
+    OpenAI is still used when configured, but this guardrail prevents common DMS
     ambiguity where "sales" can mean either KPI analysis or DMS Vehicle Sale rows.
     """
     route = route or {}
@@ -2428,7 +2181,7 @@ def query(query: str | None = None):
     routing_query = _routing_query(user_query, conversation_context)
 
     # Mandatory LLM planner.
-    # Gemini must decide intent/resource/company/time/search/widgets/fields.
+    # OpenAI must decide intent/resource/company/time/search/widgets/fields.
     # There is intentionally no rule-based fallback for normal chat behavior.
     route = _final_llm_route(routing_query)
     route["_conversation_context"] = conversation_context
@@ -2447,13 +2200,13 @@ def query(query: str | None = None):
             widgets_to_show=[],
             text_response=(
                 "Error encountered due to backend LLM not working. "
-                "The chat agent requires Gemini to detect intent, choose widgets, and plan scoped data access."
+                "The chat agent requires OpenAI to detect intent, choose widgets, and plan scoped data access."
             ),
             widget_payloads={},
             other={
                 "data_source": "none",
                 "llm_required": True,
-                "llm_enabled": bool(ENABLE_GEMINI_INTENT),
+                "llm_enabled": _data_agent_openai_enabled(),
                 "llm_status": llm_status or "no_route",
                 "llm_error": llm_error,
                 "routing_query": routing_query,
@@ -2518,7 +2271,7 @@ def query(query: str | None = None):
             other={
                 "data_source": "none",
                 "llm_required": True,
-                "llm_enabled": bool(ENABLE_GEMINI_INTENT),
+                "llm_enabled": _data_agent_openai_enabled(),
                 "llm_status": llm_status or "invalid_state",
                 "llm_error": llm_error,
                 "llm_intent": llm_intent,
@@ -2535,7 +2288,7 @@ def query(query: str | None = None):
         data["filters_applied"]["other"]["llm_companies"] = route.get("companies")
         data["filters_applied"]["other"]["llm_requested_fields"] = route.get("requested_fields")
         data["filters_applied"]["other"]["llm_confidence"] = route.get("confidence")
-        data["filters_applied"]["other"]["llm_enabled"] = bool(ENABLE_GEMINI_INTENT)
+        data["filters_applied"]["other"]["llm_enabled"] = _data_agent_openai_enabled()
         data["filters_applied"]["other"]["llm_status"] = llm_status
         data["filters_applied"]["other"]["llm_error"] = llm_error
         data["filters_applied"]["other"]["routing_query"] = routing_query
@@ -2591,7 +2344,7 @@ def _openai_gpt54mini_provider_config() -> tuple[str, str | None, str]:
         os.getenv("LLM_PROVIDER")
         or frappe.conf.get("llm_provider")
         or frappe.conf.get("LLM_PROVIDER")
-        or "gemini"
+        or "openai"
     )
     provider = str(provider).strip().lower()
 
@@ -3507,96 +3260,9 @@ def _build_tenant_comparison_response(query: str, route: dict[str, Any] | None =
 
 
 def _final_llm_route(query: str) -> dict[str, Any]:
-    provider, _openai_key, _openai_model = _openai_gpt54mini_provider_config()
+    """Mandatory OpenAI planner used by legacy-compatible query paths."""
+    return _openai_gpt54mini_route(query)
 
-    if provider == "openai":
-        return _openai_gpt54mini_route(query)
-
-    # Gemini remains available as fallback provider only if llm_provider is set back to gemini.
-    if not ENABLE_GEMINI_INTENT:
-        return {
-            "_llm_status": "disabled",
-            "_llm_error": "ENABLE_GEMINI_INTENT is false",
-        }
-
-    api_key = os.getenv("GEMINI_API_KEY") or frappe.conf.get("gemini_api_key") or frappe.conf.get("GEMINI_API_KEY")
-    if not api_key:
-        return {
-            "_llm_status": "missing_api_key",
-            "_llm_error": "GEMINI_API_KEY/gemini_api_key not found in environment or site config",
-        }
-
-    try:
-        from google import genai
-        from google.genai import types
-    except Exception as exc:
-        return {
-            "_llm_status": "import_failed",
-            "_llm_error": str(exc)[:500],
-        }
-
-    prompt = _openai_gpt54mini_planner_prompt(query)
-
-    schema = {
-        "type": "object",
-        "properties": {
-            "intent": {"type": "string"},
-            "resource": {"type": "string", "nullable": True},
-            "companies": {"type": "array", "items": {"type": "string"}},
-            "month_limit": {"type": "integer", "nullable": True},
-            "search_text": {"type": "string", "nullable": True},
-            "requested_fields": {"type": "array", "items": {"type": "string"}},
-            "pagination_action": {"type": "string", "nullable": True},
-            "wants_all_charts": {"type": "boolean"},
-            "confidence": {"type": "number"},
-        },
-        "required": ["intent"],
-    }
-
-    try:
-        client = genai.Client(api_key=api_key)
-        response = client.models.generate_content(
-            model=GEMINI_MODEL,
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                response_mime_type="application/json",
-                response_schema=schema,
-            ),
-        )
-
-        parsed = _safe_json_loads(getattr(response, "text", None))
-        if not isinstance(parsed, dict):
-            return {
-                "_llm_status": "invalid_response",
-                "_llm_error": "Gemini returned non-dict response",
-            }
-
-        if parsed.get("intent") not in VALID_INTENTS:
-            return {
-                "_llm_status": "invalid_intent",
-                "_llm_error": f"Invalid intent from Gemini: {parsed.get('intent')}",
-                "_raw_route": parsed,
-            }
-
-        if not isinstance(parsed.get("companies"), list):
-            parsed["companies"] = []
-
-        if not isinstance(parsed.get("requested_fields"), list):
-            parsed["requested_fields"] = []
-
-        parsed["_llm_status"] = "ok"
-        parsed["_llm_error"] = None
-        parsed["_llm_provider"] = "gemini"
-        parsed["_llm_model"] = GEMINI_MODEL
-        return parsed
-
-    except Exception as exc:
-        return {
-            "_llm_status": "call_failed",
-            "_llm_error": str(exc)[:500],
-            "_llm_provider": "gemini",
-            "_llm_model": GEMINI_MODEL,
-        }
 
 # OPENAI_GPT54MINI_FULL_PATCH_END
 
@@ -4178,7 +3844,7 @@ def _data_agent_provider_config() -> tuple[str, str | None, str]:
         os.getenv("LLM_PROVIDER")
         or frappe.conf.get("llm_provider")
         or frappe.conf.get("LLM_PROVIDER")
-        or "gemini"
+        or "openai"
     )
     provider = str(provider).strip().lower()
 
@@ -4196,6 +3862,28 @@ def _data_agent_provider_config() -> tuple[str, str | None, str]:
     )
 
     return provider, api_key, str(model).strip() or "gpt-5.4-mini"
+
+
+def _data_agent_openai_enabled() -> bool:
+    provider, api_key, _model = _data_agent_provider_config()
+    return provider == "openai" and bool(api_key)
+
+
+@frappe.whitelist(allow_guest=True)
+def llm_status():
+    """Return non-secret status for the active OpenAI data agent."""
+    provider, api_key, model = _data_agent_provider_config()
+    return success(
+        data={
+            "provider": provider,
+            "model": model,
+            "configured": bool(api_key),
+            "mandatory_provider": "openai",
+            "active_agent": "ultra_compact_structured_rag",
+            "database_authoritative": True,
+            "tenant_scope_enforced_before_llm": True,
+        }
+    )
 
 
 def _data_agent_catalog() -> dict[str, dict[str, str]]:
@@ -5239,10 +4927,32 @@ def _data_agent_call_openai(user_query: str, conversation_context: str | None, d
     if not api_key:
         return {
             "_llm_status": "missing_api_key",
-            "_llm_error": "openai_api_key/OPENAI_API_KEY not found in environment or site config",
+            "_llm_error": "OPENAI_API_KEY/openai_api_key is not configured",
             "_llm_provider": "openai",
             "_llm_model": model,
         }
+
+    timeout_seconds = int(
+        os.getenv("OPENAI_TIMEOUT_SECONDS")
+        or frappe.conf.get("openai_timeout_seconds")
+        or 75
+    )
+    max_output_tokens = int(
+        os.getenv("OPENAI_MAX_OUTPUT_TOKENS")
+        or frappe.conf.get("openai_max_output_tokens")
+        or 1400
+    )
+    max_retries = max(
+        0,
+        min(
+            int(
+                os.getenv("OPENAI_MAX_RETRIES")
+                or frappe.conf.get("openai_max_retries")
+                or 2
+            ),
+            3,
+        ),
+    )
 
     payload = {
         "model": model,
@@ -5255,61 +4965,84 @@ def _data_agent_call_openai(user_query: str, conversation_context: str | None, d
                 "schema": _data_agent_output_schema(),
             }
         },
+        "max_output_tokens": max_output_tokens,
         "store": False,
     }
 
     try:
-        import urllib.request
+        import time
         import urllib.error
+        import urllib.request
 
-        req = urllib.request.Request(
-            "https://api.openai.com/v1/responses",
-            data=json.dumps(payload).encode("utf-8"),
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {api_key}",
-            },
-            method="POST",
-        )
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_key}",
+        }
 
-        with urllib.request.urlopen(req, timeout=120) as res:
-            raw = res.read().decode("utf-8")
-            response_json = json.loads(raw)
+        organization = os.getenv("OPENAI_ORG_ID") or frappe.conf.get("openai_org_id") or frappe.conf.get("OPENAI_ORG_ID")
+        project = os.getenv("OPENAI_PROJECT_ID") or frappe.conf.get("openai_project_id") or frappe.conf.get("OPENAI_PROJECT_ID")
+        if organization:
+            headers["OpenAI-Organization"] = str(organization)
+        if project:
+            headers["OpenAI-Project"] = str(project)
 
-        output_text = _data_agent_extract_openai_text(response_json)
-        parsed = _safe_json_loads(output_text)
+        last_error = None
+        for attempt in range(max_retries + 1):
+            try:
+                req = urllib.request.Request(
+                    "https://api.openai.com/v1/responses",
+                    data=json.dumps(payload).encode("utf-8"),
+                    headers=headers,
+                    method="POST",
+                )
 
-        if not isinstance(parsed, dict):
-            return {
-                "_llm_status": "invalid_response",
-                "_llm_error": "OpenAI returned empty or non-dict JSON",
-                "_llm_provider": "openai",
-                "_llm_model": model,
-            }
+                with urllib.request.urlopen(req, timeout=timeout_seconds) as res:
+                    response_json = json.loads(res.read().decode("utf-8"))
 
-        parsed["_llm_status"] = "ok"
-        parsed["_llm_error"] = None
-        parsed["_llm_provider"] = "openai"
-        parsed["_llm_model"] = model
-        return parsed
+                output_text = _data_agent_extract_openai_text(response_json)
+                parsed = _safe_json_loads(output_text)
+                if not isinstance(parsed, dict):
+                    return {
+                        "_llm_status": "invalid_response",
+                        "_llm_error": "OpenAI returned empty or non-object structured JSON",
+                        "_llm_provider": "openai",
+                        "_llm_model": model,
+                    }
 
-    except Exception as exc:
-        error_detail = str(exc)[:2000]
+                parsed["_llm_status"] = "ok"
+                parsed["_llm_error"] = None
+                parsed["_llm_provider"] = "openai"
+                parsed["_llm_model"] = model
+                parsed["_openai_response_id"] = response_json.get("id")
+                return parsed
 
-        try:
-            import urllib.error
-            if isinstance(exc, urllib.error.HTTPError):
+            except urllib.error.HTTPError as exc:
                 body = exc.read().decode("utf-8", errors="replace")
-                error_detail = f"HTTP {exc.code}: {body[:2000]}"
-        except Exception:
-            pass
+                last_error = f"HTTP {exc.code}: {body[:1500]}"
+                if exc.code not in {408, 409, 429, 500, 502, 503, 504} or attempt >= max_retries:
+                    break
+            except Exception as exc:
+                last_error = str(exc)[:1500]
+                if attempt >= max_retries:
+                    break
+
+            time.sleep(0.5 * (2 ** attempt))
 
         return {
             "_llm_status": "call_failed",
-            "_llm_error": error_detail,
+            "_llm_error": last_error or "OpenAI request failed",
             "_llm_provider": "openai",
             "_llm_model": model,
         }
+
+    except Exception as exc:
+        return {
+            "_llm_status": "call_failed",
+            "_llm_error": str(exc)[:1500],
+            "_llm_provider": "openai",
+            "_llm_model": model,
+        }
+
 
 
 @frappe.whitelist(allow_guest=True)
@@ -6195,13 +5928,16 @@ def query(query: str | None = None, conversation_context: str | None = None, **k
     provider, _api_key, _model = _data_agent_provider_config()
 
     if provider != "openai":
-        previous = globals().get("_OPENAI_DATA_AGENT_PREVIOUS_QUERY")
-        if callable(previous):
-            try:
-                return previous(query=query, conversation_context=conversation_context, **kwargs)
-            except TypeError:
-                return previous()
-        return success(data=_final_out_of_scope_response())
+        data = _data_agent_llm_error(
+            {
+                "_llm_status": "unsupported_provider",
+                "_llm_error": f"LLM_PROVIDER must be openai, received: {provider}",
+                "_llm_provider": provider,
+                "_llm_model": _model,
+            },
+            str(query or ""),
+        )
+        return success(data=data)
 
     payload = _data_agent_request_payload()
     payload.update(kwargs or {})

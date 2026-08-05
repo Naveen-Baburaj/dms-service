@@ -1,2 +1,2 @@
-google-genai<2.10.0
-google-auth==2.48.0
+# Provider calls use Python's standard-library HTTP client.
+# No external language-model SDK is required.
