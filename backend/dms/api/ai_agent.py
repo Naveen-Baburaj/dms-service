@@ -5989,3 +5989,46 @@ def query(query: str | None = None, conversation_context: str | None = None, **k
 
 # ULTRA_COMPACT_RAG_FINAL_PATCH_END
 
+# DMS_THREADED_AI_MEMORY_V1_START
+
+@frappe.whitelist(allow_guest=True)
+def create_conversation(title: str | None = None):
+    from dms.api.ai_memory import create_conversation as implementation
+    return implementation(title=title)
+
+
+@frappe.whitelist(allow_guest=True)
+def list_conversations():
+    from dms.api.ai_memory import list_conversations as implementation
+    return implementation()
+
+
+@frappe.whitelist(allow_guest=True)
+def get_conversation(conversation_id: str | None = None):
+    from dms.api.ai_memory import get_conversation as implementation
+    return implementation(conversation_id=conversation_id)
+
+
+@frappe.whitelist(allow_guest=True)
+def archive_conversation(conversation_id: str | None = None):
+    from dms.api.ai_memory import archive_conversation as implementation
+    return implementation(conversation_id=conversation_id)
+
+
+@frappe.whitelist(allow_guest=True)
+def query(
+    query: str | None = None,
+    conversation_id: str | None = None,
+    conversation_context: str | None = None,
+    **kwargs,
+):
+    # Raw frontend transcripts are intentionally ignored. The memory module
+    # loads the summary that belongs to this server-side conversation.
+    from dms.api.ai_memory import query_with_memory
+    return query_with_memory(
+        query=query,
+        conversation_id=conversation_id,
+        **kwargs,
+    )
+
+# DMS_THREADED_AI_MEMORY_V1_END

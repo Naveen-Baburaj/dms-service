@@ -8,7 +8,7 @@ import {
   PhoneCall, Workflow, Database, Cloud, CheckCircle2, Loader2, ShieldCheck,
 } from 'lucide-react';
 import {
-  AreaChart, Area, BarChart, Bar,
+  AreaChart, Area, BarChart, Bar, PieChart, Pie, Cell, Legend,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts';
 import { cn } from '@/lib/utils';
@@ -17,7 +17,14 @@ import type { User } from '@/types';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { RpaSavedContactsTable } from '@/components/rpa/RpaSavedContactsTable';
-import { queryDashboardAgent, type AgentResponse, type FiltersApplied } from '@/services/api/aiAgent';
+import {
+  queryDashboardAgent,
+  listAgentConversations,
+  getAgentConversation,
+  type AgentResponse,
+  type FiltersApplied,
+  type AgentConversationSummary,
+} from '@/services/api/aiAgent';
 import { checkGhlSession, openGhlLogin, saveRpaContact, type RpaContactPayload, type RpaSaveResult, type RpaSaveTarget } from '@/services/api/rpaGhl';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -157,7 +164,7 @@ interface GenericChartSpec {
   id: string;
   title: string;
   description?: string;
-  type: 'bar' | 'line';
+  type: 'bar' | 'line' | 'pie';
   labels: string[];
   series: number[];
   total?: number;
@@ -168,7 +175,7 @@ interface GenericChartSpec {
 interface GenericChartsPayload {
   title: string;
   scope: string;
-  month_limit: number;
+  month_limit: number | null;
   charts: GenericChartSpec[];
   data_source?: string;
 }
@@ -433,10 +440,71 @@ function GenericChartsWidget({ payload }: { payload: unknown }) {
     return `${prefix}${formatted}${suffix}`;
   }
 
+  const PIE_COLORS = [
+    '#7c3aed', '#0ea5e9', '#10b981', '#f59e0b',
+    '#ef4444', '#8b5cf6', '#14b8a6', '#f97316',
+  ];
+
   function MiniChart({ chart }: { chart: GenericChartSpec }) {
     const labels = chart.labels ?? [];
     const values = (chart.series ?? []).map((value) => Number(value) || 0);
     const max = Math.max(...values.map((value) => Math.abs(value)), 1);
+
+    if (chart.type === 'pie') {
+      const pieData = labels.map((label, index) => ({
+        name: label,
+        value: values[index] ?? 0,
+      }));
+
+      return (
+        <div className="rounded-lg border border-border/40 p-3">
+          <div className="mb-2">
+            <p className="text-xs font-semibold">{chart.title}</p>
+            {chart.description && (
+              <p className="text-[10px] text-muted-foreground">{chart.description}</p>
+            )}
+          </div>
+          <ResponsiveContainer width="100%" height={240}>
+            <PieChart>
+              <Pie
+                data={pieData}
+                dataKey="value"
+                nameKey="name"
+                cx="50%"
+                cy="46%"
+                outerRadius={78}
+                innerRadius={32}
+                paddingAngle={2}
+                label={({ name, percent }) =>
+                  `${name} ${(Number(percent || 0) * 100).toFixed(0)}%`
+                }
+              >
+                {pieData.map((entry, index) => (
+                  <Cell
+                    key={`${entry.name}-${index}`}
+                    fill={PIE_COLORS[index % PIE_COLORS.length]}
+                  />
+                ))}
+              </Pie>
+              <Tooltip
+                formatter={(value: number) => [
+                  formatValue(Number(value), chart),
+                  chart.title,
+                ]}
+                contentStyle={{ fontSize: 11, borderRadius: 8 }}
+              />
+              <Legend wrapperStyle={{ fontSize: 10 }} />
+            </PieChart>
+          </ResponsiveContainer>
+          <p className="mt-1 text-center text-[10px] text-muted-foreground">
+            Total: {formatValue(
+              chart.total ?? values.reduce((a, b) => a + b, 0),
+              chart,
+            )}
+          </p>
+        </div>
+      );
+    }
 
     if (chart.type === 'line' && values.length > 1) {
       const width = 420;
@@ -502,7 +570,9 @@ function GenericChartsWidget({ payload }: { payload: unknown }) {
           {p.title ?? 'Available charts'}
         </p>
         <p className="mt-0.5 text-[10px] text-muted-foreground">
-          Scope: {p.scope} · Last {p.month_limit} months · {charts.length} chart(s)
+          Scope: {p.scope}
+          {p.month_limit ? ` · Last ${p.month_limit} months` : ''}
+          {' · '}{charts.length} chart(s)
         </p>
       </div>
 
@@ -1137,12 +1207,44 @@ export default function ChatPage() {
   const [input, setInput] = useState('');
   const [isTyping, setIsTyping] = useState(false);
   const [activeModule, setActiveModule] = useState<WorkspaceModule>('chat');
+  const [conversations, setConversations] = useState<AgentConversationSummary[]>([]);
+  const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
+  const [activeConversationTitle, setActiveConversationTitle] = useState('New conversation');
+  const [isLoadingConversation, setIsLoadingConversation] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, isTyping]);
+
+  useEffect(() => {
+    if (!user?.id) return;
+
+    let cancelled = false;
+
+    async function hydrateConversations() {
+      try {
+        const items = await listAgentConversations({
+          role: resolveRole(user),
+          company: resolveCompany(user),
+          clientUserId: user?.id ?? user?.email,
+        });
+
+        if (cancelled) return;
+        setConversations(items);
+
+        if (items.length > 0) {
+          await openConversation(items[0].id);
+        }
+      } catch {
+        if (!cancelled) setConversations([]);
+      }
+    }
+
+    hydrateConversations();
+    return () => { cancelled = true; };
+  }, [user?.id]);
 
   function autoResize() {
     const el = textareaRef.current;
@@ -1153,37 +1255,81 @@ export default function ChatPage() {
 
   function startNewChat() {
     setActiveModule('chat');
+    setActiveConversationId(null);
+    setActiveConversationTitle('New conversation');
     setMessages([]);
     setInput('');
   }
 
+  async function refreshConversationList() {
+    if (!user?.id) return;
+
+    const items = await listAgentConversations({
+      role: resolveRole(user),
+      company: resolveCompany(user),
+      clientUserId: user?.id ?? user?.email,
+    });
+    setConversations(items);
+  }
+
+  async function openConversation(conversationId: string) {
+    if (!user?.id || isTyping) return;
+
+    setActiveModule('chat');
+    setIsLoadingConversation(true);
+
+    try {
+      const detail = await getAgentConversation({
+        conversationId,
+        role: resolveRole(user),
+        company: resolveCompany(user),
+        clientUserId: user?.id ?? user?.email,
+      });
+
+      setActiveConversationId(detail.conversation.id);
+      setActiveConversationTitle(detail.conversation.title);
+      setMessages(
+        detail.messages.map((message) => ({
+          id: message.id,
+          role: message.role,
+          content: message.content,
+          timestamp: new Date(message.timestamp),
+          agentData: message.agent_data ?? undefined,
+          error: Boolean(message.error),
+        })),
+      );
+    } finally {
+      setIsLoadingConversation(false);
+    }
+  }
+
   async function sendMessage(text: string) {
-    if (!text.trim() || isTyping) return;
+    if (!text.trim() || isTyping || isLoadingConversation) return;
+
     const userMsg: Message = {
       id: Date.now().toString(),
       role: 'user',
       content: text.trim(),
       timestamp: new Date(),
     };
+
     setMessages((prev) => [...prev, userMsg]);
     setInput('');
     if (textareaRef.current) textareaRef.current.style.height = 'auto';
-
-
     setIsTyping(true);
-    try {
-      const conversationContext = messages
-        .slice(-6)
-        .map((message) => `${message.role}: ${message.content}`)
-        .join('\n');
 
+    try {
       const data = await queryDashboardAgent({
         query: text.trim(),
         role: resolveRole(user),
         company: resolveCompany(user),
-        conversationContext,
+        clientUserId: user?.id ?? user?.email,
+        conversationId: activeConversationId,
       });
-      setIsTyping(false);
+
+      if (data.conversation_id) setActiveConversationId(data.conversation_id);
+      if (data.conversation_title) setActiveConversationTitle(data.conversation_title);
+
       setMessages((prev) => [
         ...prev,
         {
@@ -1194,8 +1340,14 @@ export default function ChatPage() {
           agentData: data,
         },
       ]);
+
+      try {
+        await refreshConversationList();
+      } catch {
+        // The answer is already complete; a sidebar refresh failure must not
+        // turn a successful AI response into an error message.
+      }
     } catch {
-      setIsTyping(false);
       setMessages((prev) => [
         ...prev,
         {
@@ -1206,6 +1358,8 @@ export default function ChatPage() {
           error: true,
         },
       ]);
+    } finally {
+      setIsTyping(false);
     }
   }
 
@@ -1244,6 +1398,37 @@ export default function ChatPage() {
         </div>
 
         <div className="px-3 pb-3">
+          <div className="mb-2 flex items-center justify-between px-1 text-[10px] font-semibold uppercase tracking-wider text-white/30">
+            <span>Recent Chats</span>
+            {isLoadingConversation && <Loader2 className="h-3 w-3 animate-spin" />}
+          </div>
+          <div className="max-h-52 space-y-1 overflow-y-auto pr-1">
+            {conversations.length === 0 ? (
+              <p className="rounded-lg px-2 py-2 text-[11px] text-white/35">No saved chats yet.</p>
+            ) : (
+              conversations.map((conversation) => (
+                <button
+                  key={conversation.id}
+                  type="button"
+                  onClick={() => openConversation(conversation.id)}
+                  className={cn(
+                    'w-full rounded-lg px-2.5 py-2 text-left transition-colors',
+                    activeConversationId === conversation.id
+                      ? 'bg-violet-500/20 text-white'
+                      : 'text-white/55 hover:bg-white/5 hover:text-white/80',
+                  )}
+                >
+                  <p className="truncate text-xs font-medium">{conversation.title}</p>
+                  <p className="mt-0.5 truncate text-[9px] text-white/30">
+                    {conversation.message_count} messages
+                  </p>
+                </button>
+              ))
+            )}
+          </div>
+        </div>
+
+        <div className="px-3 pb-3">
           <div className="mb-2 px-1 text-[10px] font-semibold uppercase tracking-wider text-white/30">
             Agents
           </div>
@@ -1252,7 +1437,6 @@ export default function ChatPage() {
               type="button"
               onClick={() => {
                 setActiveModule('chat');
-                startNewChat();
               }}
               className={cn(
                 'flex w-full items-center justify-between rounded-xl border px-3 py-2.5 text-left text-sm transition-colors',
@@ -1400,7 +1584,14 @@ export default function ChatPage() {
             <div className="mx-auto flex max-w-4xl flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <div className="flex items-center gap-2">
-                  <h1 className="text-sm font-semibold text-foreground">Vividity</h1>
+                  <h1 className="text-sm font-semibold text-foreground">
+                    Vividity
+                    {activeConversationId && (
+                      <span className="ml-2 font-normal text-muted-foreground">
+                        · {activeConversationTitle}
+                      </span>
+                    )}
+                  </h1>
                   <span className="rounded-full border border-violet-500/25 bg-violet-500/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-violet-600">
                     AI Demo Mode
                   </span>
@@ -1497,7 +1688,7 @@ export default function ChatPage() {
                 </button>
                 <button
                   onClick={() => sendMessage(input)}
-                  disabled={!input.trim() || isTyping}
+                  disabled={!input.trim() || isTyping || isLoadingConversation}
                   className={cn(
                     'flex h-8 w-8 items-center justify-center rounded-xl transition-all',
                     input.trim() && !isTyping

@@ -1,0 +1,158 @@
+{
+  "name": "DMS AI Conversation",
+  "module": "DMS",
+  "doctype": "DocType",
+  "custom": 0,
+  "istable": 0,
+  "editable_grid": 1,
+  "allow_rename": 0,
+  "autoname": "hash",
+  "is_submittable": 0,
+  "track_changes": 0,
+  "sort_field": "last_message_at",
+  "sort_order": "DESC",
+  "fields": [
+    {
+      "fieldname": "title",
+      "fieldtype": "Data",
+      "label": "Title",
+      "reqd": 1,
+      "in_list_view": 1
+    },
+    {
+      "fieldname": "owner_key",
+      "fieldtype": "Data",
+      "label": "Owner Key",
+      "reqd": 1,
+      "read_only": 1
+    },
+    {
+      "fieldname": "owner_label",
+      "fieldtype": "Data",
+      "label": "Owner Label",
+      "read_only": 1
+    },
+    {
+      "fieldname": "scope_key",
+      "fieldtype": "Data",
+      "label": "Scope Key",
+      "reqd": 1,
+      "read_only": 1
+    },
+    {
+      "fieldname": "company_id",
+      "fieldtype": "Data",
+      "label": "Company ID",
+      "read_only": 1
+    },
+    {
+      "fieldname": "company_name",
+      "fieldtype": "Data",
+      "label": "Company Name",
+      "read_only": 1
+    },
+    {
+      "fieldname": "is_group_admin",
+      "fieldtype": "Check",
+      "label": "Group Admin",
+      "default": "0",
+      "read_only": 1
+    },
+    {
+      "fieldname": "memory_summary",
+      "fieldtype": "Long Text",
+      "label": "Memory Summary",
+      "read_only": 1
+    },
+    {
+      "fieldname": "memory_state_json",
+      "fieldtype": "Long Text",
+      "label": "Memory State JSON",
+      "read_only": 1
+    },
+    {
+      "fieldname": "last_intent",
+      "fieldtype": "Data",
+      "label": "Last Intent",
+      "read_only": 1
+    },
+    {
+      "fieldname": "last_resource",
+      "fieldtype": "Data",
+      "label": "Last Resource",
+      "read_only": 1
+    },
+    {
+      "fieldname": "last_message_at",
+      "fieldtype": "Datetime",
+      "label": "Last Message At",
+      "read_only": 1
+    },
+    {
+      "fieldname": "message_count",
+      "fieldtype": "Int",
+      "label": "Message Count",
+      "default": "0",
+      "read_only": 1
+    },
+    {
+      "fieldname": "status",
+      "fieldtype": "Select",
+      "label": "Status",
+      "options": "Active\nArchived",
+      "default": "Active",
+      "in_list_view": 1
+    },
+    {
+      "fieldname": "last_openai_response_id",
+      "fieldtype": "Data",
+      "label": "Last OpenAI Response ID",
+      "read_only": 1
+    }
+  ],
+  "permissions": [
+    {
+      "role": "Group Admin",
+      "read": 1,
+      "write": 1,
+      "create": 1,
+      "delete": 1
+    },
+    {
+      "role": "Honda Manager",
+      "read": 1,
+      "write": 1,
+      "create": 1
+    },
+    {
+      "role": "Honda User",
+      "read": 1,
+      "write": 1,
+      "create": 1
+    },
+    {
+      "role": "NEXA Manager",
+      "read": 1,
+      "write": 1,
+      "create": 1
+    },
+    {
+      "role": "NEXA User",
+      "read": 1,
+      "write": 1,
+      "create": 1
+    },
+    {
+      "role": "Jaguar Manager",
+      "read": 1,
+      "write": 1,
+      "create": 1
+    },
+    {
+      "role": "Jaguar User",
+      "read": 1,
+      "write": 1,
+      "create": 1
+    }
+  ]
+}
