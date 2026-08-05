@@ -1,0 +1,74 @@
+name: DMS Agent Guardrails
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  static-contracts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Compile Python contracts
+        run: |
+          python -m py_compile \
+            backend/dms/agent/controls.py \
+            backend/dms/agent/context.py \
+            backend/dms/agent/registry.py \
+            backend/dms/agent/native_analytics.py \
+            backend/dms/api/ai_agent.py
+
+      - name: Verify Step 4 AST contracts
+        run: |
+          python - <<'PY'
+          import ast
+          from pathlib import Path
+
+          controls = Path('backend/dms/agent/controls.py').read_text()
+          registry = Path('backend/dms/agent/registry.py').read_text()
+          context = Path('backend/dms/agent/context.py').read_text()
+          api = Path('backend/dms/api/ai_agent.py').read_text()
+
+          for path in [
+              'backend/dms/agent/controls.py',
+              'backend/dms/agent/context.py',
+              'backend/dms/agent/registry.py',
+              'backend/dms/api/ai_agent.py',
+          ]:
+              ast.parse(Path(path).read_text(), filename=path)
+
+          assert 'guarded_agent_endpoint' in api
+          assert '@guarded_agent_endpoint' in api
+          assert 'tool_timeout' in registry
+          assert 'enforce_tool_rate_limit' in registry
+          assert 'audit_tool_execution' in registry
+          assert 'dms_agent_request_id' in context
+          assert 'RATE_LIMIT_LUA' in controls
+          assert 'CONCURRENCY_ACQUIRE_LUA' in controls
+          assert 'auth_contract_decision' in controls
+          print('Step 4 static contracts: PASS')
+          PY
+
+  frontend-typecheck:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run type-check

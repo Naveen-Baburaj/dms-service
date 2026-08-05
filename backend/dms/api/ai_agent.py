@@ -24,6 +24,7 @@ from typing import Any
 import frappe
 from frappe.utils import add_months, getdate, nowdate
 
+from dms.agent.controls import guarded_agent_endpoint
 from dms.api.knowledge_guard import build_knowledge_response
 from dms.utils.permissions import get_user_company, is_group_admin
 from dms.utils.response import success, error
@@ -2169,6 +2170,7 @@ def _final_out_of_scope_response() -> dict[str, Any]:
 # FINAL_DEMO_AI_PATCH_END
 
 @frappe.whitelist(allow_guest=True)
+@guarded_agent_endpoint
 def query(query: str | None = None):
     payload = _request_json()
     user_query = query or payload.get("query")

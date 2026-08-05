@@ -32,8 +32,16 @@ def build_tool_context() -> ToolContext:
     )
 
     tenant_id = _header("x-tenant-id") or None
+    try:
+        guarded_request_id = str(
+            getattr(frappe.local, "dms_agent_request_id", "") or ""
+        ).strip()
+    except Exception:
+        guarded_request_id = ""
+
     request_id = (
-        _header("x-client-request-id")
+        guarded_request_id
+        or _header("x-client-request-id")
         or _header("x-request-id")
         or str(uuid.uuid4())
     )

@@ -7,6 +7,12 @@ import time
 from typing import Any, Callable
 
 from dms.agent.types import AgentTool, ToolContext
+from dms.agent.controls import (
+    AgentToolTimeoutError,
+    audit_tool_execution,
+    enforce_tool_rate_limit,
+    tool_timeout,
+)
 
 
 _TOOLS: dict[str, AgentTool] = {}
@@ -194,10 +200,31 @@ def execute_tool(
     started = time.perf_counter()
     ok = True
     error = None
+    timed_out = False
+    timeout_mode = "not_started"
+    rate_decision = None
     try:
-        payload = tool.handler(context, arguments)
+        rate_decision = enforce_tool_rate_limit(context, name)
+        with tool_timeout(tool.timeout_seconds) as timeout_state:
+            timeout_mode = str(timeout_state.get("mode") or "unknown")
+            payload = tool.handler(context, arguments)
         if not isinstance(payload, dict):
             payload = {"result": payload}
+    except AgentToolTimeoutError as exc:
+        ok = False
+        timed_out = True
+        error = f"{type(exc).__name__}: {str(exc)[:1000]}"
+        try:
+            import frappe
+            frappe.db.rollback()
+        except Exception:
+            pass
+        payload = {
+            "ok": False,
+            "error": error,
+            "tool": name,
+            "timed_out": True,
+        }
     except Exception as exc:
         ok = False
         error = f"{type(exc).__name__}: {str(exc)[:1000]}"
@@ -236,7 +263,25 @@ def execute_tool(
         "output_chars": len(serialised),
         "truncated": truncated,
         "error": error,
+        "timed_out": timed_out,
+        "timeout_seconds": tool.timeout_seconds,
+        "timeout_mode": timeout_mode,
+        "rate_limit_current": (
+            rate_decision.current if rate_decision else None
+        ),
+        "rate_limit": (
+            rate_decision.limit if rate_decision else None
+        ),
     }
+    audit_id, audit_logged = audit_tool_execution(
+        context=context,
+        tool_name=name,
+        arguments=arguments,
+        output=payload,
+        trace=trace,
+    )
+    trace["audit_id"] = audit_id
+    trace["audit_logged"] = audit_logged
     return payload, trace
 
 
