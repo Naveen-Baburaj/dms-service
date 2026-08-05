@@ -638,7 +638,7 @@ def _openai_headers(api_key: str) -> dict[str, str]:
     return headers
 
 
-def _call_openai(
+def _call_openai_single_pass(
     user_query: str,
     memory_context: str,
     data_pack: dict[str, Any],
@@ -751,6 +751,119 @@ def _call_openai(
         "_llm_provider": "openai",
         "_llm_model": model,
     }
+
+
+
+def _call_openai(
+    user_query: str,
+    memory_context: str,
+    data_pack: dict[str, Any],
+) -> dict[str, Any]:
+    agentic_error = None
+
+    try:
+        from dms.agent.orchestrator import (
+            is_agentic_enabled,
+            run_agentic_plan,
+        )
+
+        if is_agentic_enabled():
+            result = run_agentic_plan(
+                user_query=user_query,
+                memory_context=memory_context,
+                seed_data_pack=data_pack,
+                output_schema=_memory_output_schema(),
+            )
+            if result.get("_llm_status") == "ok":
+                return result
+
+            agentic_error = str(
+                result.get("_llm_error")
+                or "Agentic orchestrator returned a non-success status."
+            )[:1800]
+
+            fallback_enabled = str(
+                frappe.conf.get("dms_agentic_fallback_enabled")
+                if frappe.conf.get("dms_agentic_fallback_enabled")
+                is not None
+                else "1"
+            ).strip().lower() in {
+                "1",
+                "true",
+                "yes",
+                "on",
+            }
+            if not fallback_enabled:
+                return result
+
+    except Exception as exc:
+        agentic_error = (
+            f"{type(exc).__name__}: {str(exc)[:1800]}"
+        )
+
+        fallback_enabled = str(
+            frappe.conf.get("dms_agentic_fallback_enabled")
+            if frappe.conf.get("dms_agentic_fallback_enabled")
+            is not None
+            else "1"
+        ).strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+        if not fallback_enabled:
+            return {
+                "_llm_status": "agentic_failure",
+                "_llm_error": agentic_error,
+                "_llm_provider": "openai",
+                "_llm_model": (
+                    frappe.conf.get("openai_model")
+                    or "unknown"
+                ),
+                "_agentic_used": True,
+                "_agentic_steps": 0,
+                "_agentic_tool_calls": 0,
+                "_agentic_trace": [],
+                "_agentic_request_ids": [],
+            }
+
+    legacy = _call_openai_single_pass(
+        user_query,
+        memory_context,
+        data_pack,
+    )
+    legacy["_agentic_used"] = False
+    legacy["_agentic_steps"] = 0
+    legacy["_agentic_tool_calls"] = 0
+    legacy["_agentic_trace"] = []
+    legacy["_agentic_request_ids"] = []
+    legacy["_agentic_fallback_error"] = agentic_error
+    return legacy
+
+
+def _attach_agentic_plan_metadata(
+    other: dict[str, Any],
+    plan: dict[str, Any],
+) -> None:
+    other["agentic_mode"] = bool(
+        plan.get("_agentic_used")
+    )
+    other["agentic_steps"] = int(
+        plan.get("_agentic_steps") or 0
+    )
+    other["agentic_tool_calls"] = int(
+        plan.get("_agentic_tool_calls") or 0
+    )
+    other["agentic_tool_trace"] = (
+        plan.get("_agentic_trace") or []
+    )
+    other["agentic_request_ids"] = (
+        plan.get("_agentic_request_ids") or []
+    )
+    other["agentic_fallback_error"] = (
+        plan.get("_agentic_fallback_error")
+    )
 
 
 def _message_agent_data(value: str | None) -> dict[str, Any] | None:
@@ -1110,6 +1223,7 @@ def query_with_memory(
         other["rag_resources"] = list(
             (llm_pack.get("resources") or {}).keys()
         )
+        _attach_agentic_plan_metadata(other, plan)
 
         data = _attach_conversation_metadata(data, conversation_doc)
         _save_message(
@@ -1132,6 +1246,7 @@ def query_with_memory(
     other["rag_resources"] = list(
         (llm_pack.get("resources") or {}).keys()
     )
+    _attach_agentic_plan_metadata(other, plan)
 
     _update_conversation_from_plan(conversation_doc, plan)
     data = _attach_conversation_metadata(data, conversation_doc)
