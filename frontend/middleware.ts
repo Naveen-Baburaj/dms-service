@@ -2,6 +2,13 @@ import { NextResponse, type NextRequest } from 'next/server';
 
 const PUBLIC_PATHS = ['/login', '/forgot-password'];
 
+const PUBLIC_BACKEND_ORIGIN =
+  process.env.NEXT_PUBLIC_API_URL ?? 'http://dms.localhost:8000';
+const INTERNAL_BACKEND_ORIGIN =
+  process.env.DMS_INTERNAL_API_URL ?? PUBLIC_BACKEND_ORIGIN;
+const FRAPPE_SITE_NAME =
+  process.env.DMS_FRAPPE_SITE ?? 'dms.localhost';
+
 const COMPANY_ROUTE_MAP: Record<string, string[]> = {
   Honda: ['/honda'],
   NEXA: ['/nexa'],
@@ -9,75 +16,97 @@ const COMPANY_ROUTE_MAP: Record<string, string[]> = {
   Group: ['/admin', '/honda', '/nexa', '/jaguar'],
 };
 
-function decodeBase64Url(value: string): string {
-  let normalized = value.replace(/-/g, '+').replace(/_/g, '/');
-  const padding = normalized.length % 4;
+const DEFAULT_ROUTE_MAP: Record<string, string> = {
+  Honda: '/honda',
+  NEXA: '/nexa',
+  Jaguar: '/jaguar',
+  Group: '/admin',
+};
 
-  if (padding) {
-    normalized += '='.repeat(4 - padding);
-  }
+type SessionUser = {
+  company?: string;
+};
 
-  return atob(normalized);
+function loginRedirect(request: NextRequest): NextResponse {
+  const loginUrl = new URL('/login', request.url);
+  loginUrl.searchParams.set('redirect', request.nextUrl.pathname);
+  const response = NextResponse.redirect(loginUrl);
+  response.cookies.delete('sid');
+  return response;
 }
 
-function parseJWTPayload(token: string): Record<string, unknown> | null {
+async function loadSessionUser(
+  sessionId: string,
+): Promise<SessionUser | null> {
   try {
-    const parts = token.split('.');
+    const response = await fetch(
+      `${INTERNAL_BACKEND_ORIGIN}/api/method/dms.api.auth.me`,
+      {
+        method: 'GET',
+        headers: {
+          Accept: 'application/json',
+          Cookie: `sid=${sessionId}`,
+          'X-Frappe-Site-Name': FRAPPE_SITE_NAME,
+        },
+        cache: 'no-store',
+      },
+    );
 
-    if (parts.length < 2 || !parts[1]) {
-      return null;
-    }
+    if (!response.ok) return null;
 
-    return JSON.parse(decodeBase64Url(parts[1]));
+    const raw = await response.json();
+    const message =
+      typeof raw?.message === 'object' && raw.message !== null
+        ? raw.message
+        : raw;
+    const data =
+      typeof message?.data === 'object' && message.data !== null
+        ? message.data
+        : message;
+    const user =
+      typeof data?.user === 'object' && data.user !== null
+        ? data.user
+        : null;
+
+    return user;
   } catch {
     return null;
   }
 }
 
-export function middleware(request: NextRequest) {
+export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
-  if (PUBLIC_PATHS.some((p) => pathname.startsWith(p))) {
+  if (PUBLIC_PATHS.some((publicPath) => pathname.startsWith(publicPath))) {
     return NextResponse.next();
   }
 
-  const token = request.cookies.get('dms_access_token')?.value;
-
-  if (!token) {
-    const loginUrl = new URL('/login', request.url);
-    loginUrl.searchParams.set('redirect', pathname);
-    return NextResponse.redirect(loginUrl);
+  const sessionId = request.cookies.get('sid')?.value;
+  if (!sessionId || sessionId === 'Guest') {
+    return loginRedirect(request);
   }
 
-  const payload = parseJWTPayload(token);
-  const exp = Number(payload?.exp);
-
-  if (!payload || !exp || exp * 1000 < Date.now()) {
-    const loginUrl = new URL('/login', request.url);
-    loginUrl.searchParams.set('redirect', pathname);
-    return NextResponse.redirect(loginUrl);
+  const user = await loadSessionUser(sessionId);
+  const company = String(user?.company ?? '');
+  if (!company) {
+    return loginRedirect(request);
   }
 
-  const company = payload.company as string;
-  const allowedRoutes = COMPANY_ROUTE_MAP[company] ?? [];
   const isDashboardRoute =
-    pathname.startsWith('/honda') ||
-    pathname.startsWith('/nexa') ||
-    pathname.startsWith('/jaguar') ||
-    pathname.startsWith('/admin');
+    pathname.startsWith('/honda')
+    || pathname.startsWith('/nexa')
+    || pathname.startsWith('/jaguar')
+    || pathname.startsWith('/admin');
 
-  if (isDashboardRoute && allowedRoutes.length > 0) {
-    const hasAccess = allowedRoutes.some((r) => pathname.startsWith(r));
-
-    if (!hasAccess) {
-      const dashboardMap: Record<string, string> = {
-        Honda: '/honda',
-        NEXA: '/nexa',
-        Jaguar: '/jaguar',
-        Group: '/admin',
-      };
-
-      return NextResponse.redirect(new URL(dashboardMap[company] ?? '/login', request.url));
+  if (isDashboardRoute) {
+    const allowedRoutes = COMPANY_ROUTE_MAP[company] ?? [];
+    const allowed = allowedRoutes.some((route) =>
+      pathname.startsWith(route),
+    );
+    if (!allowed) {
+      return NextResponse.redirect(
+        new URL(DEFAULT_ROUTE_MAP[company] ?? '/login', request.url),
+      );
     }
   }
 

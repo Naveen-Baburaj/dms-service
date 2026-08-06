@@ -5,6 +5,18 @@ import uuid
 import frappe
 
 from dms.agent.types import ToolContext
+from dms.utils.permissions import get_user_company, is_group_admin
+
+
+ROLE_KEYS = {
+    "Group Admin": "group_admin",
+    "Honda Manager": "honda_manager",
+    "Honda User": "honda_user",
+    "NEXA Manager": "nexa_manager",
+    "NEXA User": "nexa_user",
+    "Jaguar Manager": "jaguar_manager",
+    "Jaguar User": "jaguar_user",
+}
 
 
 def _header(name: str) -> str:
@@ -14,24 +26,51 @@ def _header(name: str) -> str:
         return ""
 
 
-def build_tool_context() -> ToolContext:
-    from dms.api import ai_agent
-
-    is_admin, company_id, company_name = (
-        ai_agent._data_agent_current_scope()
-    )
-
+def _session_user() -> str:
     try:
-        user = str(frappe.session.user or "Guest").strip() or "Guest"
+        user = str(frappe.session.user or "").strip()
     except Exception:
-        user = "Guest"
+        user = ""
+    if not user or user == "Guest":
+        raise frappe.AuthenticationError(
+            "An authenticated Frappe session is required."
+        )
+    return user
 
-    header_role = _header("x-user-role")
-    role = header_role or (
-        "group_admin" if is_admin else "tenant_user"
+
+def _role_key(user: str) -> str:
+    roles = set(frappe.get_roles(user))
+    for role, key in ROLE_KEYS.items():
+        if role in roles:
+            return key
+    raise frappe.PermissionError(
+        "The authenticated user does not have an authorised DMS role."
     )
 
-    tenant_id = _header("x-tenant-id") or None
+
+def build_tool_context() -> ToolContext:
+    user = _session_user()
+    role = _role_key(user)
+    is_admin = bool(is_group_admin())
+
+    company_id: str | None = None
+    company_name: str | None = None
+    if not is_admin:
+        resolved = get_user_company()
+        if not resolved or resolved == "__none__":
+            raise frappe.PermissionError(
+                "The authenticated DMS role is not mapped to a company."
+            )
+        company_id = str(resolved)
+        company_name = str(
+            frappe.db.get_value(
+                "DMS Company",
+                company_id,
+                "company_name",
+            )
+            or company_id
+        )
+
     try:
         guarded_request_id = str(
             getattr(frappe.local, "dms_agent_request_id", "") or ""
@@ -50,8 +89,8 @@ def build_tool_context() -> ToolContext:
         request_id=request_id,
         user=user,
         role=role,
-        tenant_id=tenant_id,
-        is_admin=bool(is_admin),
-        company_id=str(company_id) if company_id else None,
-        company_name=str(company_name) if company_name else None,
+        tenant_id=company_id,
+        is_admin=is_admin,
+        company_id=company_id,
+        company_name=company_name,
     )

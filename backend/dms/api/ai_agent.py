@@ -264,24 +264,11 @@ def _company_name_from_id(company_id: str | None) -> str | None:
         return company_id
 
 
-def _is_admin_from_dev_header() -> bool:
-    return _header("x-user-role") == "service_centre_admin"
-
-
-def _dev_company_from_header() -> str | None:
-    role = _header("x-user-role")
-    if role == "service_centre_admin":
-        return None
-    return _company_name_from_alias(_header("x-tenant-id"))
-
-
 def _is_admin() -> bool:
     try:
-        if is_group_admin():
-            return True
+        return bool(is_group_admin())
     except Exception:
-        pass
-    return _is_admin_from_dev_header()
+        return False
 
 
 def _user_company_scope() -> tuple[str | None, str | None]:
@@ -290,14 +277,12 @@ def _user_company_scope() -> tuple[str | None, str | None]:
 
     try:
         company_id = get_user_company()
-        if company_id and company_id != "__none__":
-            return company_id, _company_name_from_id(company_id)
     except Exception:
-        pass
+        company_id = "__none__"
 
-    company_name = _dev_company_from_header()
-    company_id = _company_id_from_name(company_name)
-    return company_id, company_name
+    if not company_id or company_id == "__none__":
+        return "__none__", None
+    return str(company_id), _company_name_from_id(str(company_id))
 
 
 def _mentioned_company_names(query: str) -> set[str]:
@@ -2169,7 +2154,7 @@ def _final_out_of_scope_response() -> dict[str, Any]:
 
 # FINAL_DEMO_AI_PATCH_END
 
-@frappe.whitelist(allow_guest=True)
+@frappe.whitelist()
 @guarded_agent_endpoint
 def query(query: str | None = None):
     payload = _request_json()
@@ -2301,7 +2286,7 @@ def query(query: str | None = None):
 
 
 
-@frappe.whitelist(allow_guest=True)
+@frappe.whitelist()
 def widget_registry():
     return success(
         data={
@@ -2318,7 +2303,7 @@ def widget_registry():
     )
 
 
-@frappe.whitelist(allow_guest=True)
+@frappe.whitelist()
 def examples():
     return success(
         data={
@@ -3871,7 +3856,7 @@ def _data_agent_openai_enabled() -> bool:
     return provider == "openai" and bool(api_key)
 
 
-@frappe.whitelist(allow_guest=True)
+@frappe.whitelist()
 def llm_status():
     """Return non-secret status for the active OpenAI data agent."""
     provider, api_key, model = _data_agent_provider_config()
@@ -4671,7 +4656,7 @@ def _data_agent_request_payload() -> dict[str, Any]:
 _OPENAI_DATA_AGENT_PREVIOUS_QUERY = globals().get("query")
 
 
-@frappe.whitelist(allow_guest=True)
+@frappe.whitelist()
 def query(query: str | None = None, conversation_context: str | None = None, **kwargs):
     provider, _api_key, _model = _data_agent_provider_config()
 
@@ -5047,7 +5032,7 @@ def _data_agent_call_openai(user_query: str, conversation_context: str | None, d
 
 
 
-@frappe.whitelist(allow_guest=True)
+@frappe.whitelist()
 def query(query: str | None = None, conversation_context: str | None = None, **kwargs):
     provider, _api_key, _model = _data_agent_provider_config()
 
@@ -5925,7 +5910,7 @@ Authorised DMS data pack:
 """.strip()
 
 
-@frappe.whitelist(allow_guest=True)
+@frappe.whitelist()
 def query(query: str | None = None, conversation_context: str | None = None, **kwargs):
     provider, _api_key, _model = _data_agent_provider_config()
 
@@ -5993,31 +5978,36 @@ def query(query: str | None = None, conversation_context: str | None = None, **k
 
 # DMS_THREADED_AI_MEMORY_V1_START
 
-@frappe.whitelist(allow_guest=True)
+@frappe.whitelist()
+@guarded_agent_endpoint
 def create_conversation(title: str | None = None):
     from dms.api.ai_memory import create_conversation as implementation
     return implementation(title=title)
 
 
-@frappe.whitelist(allow_guest=True)
+@frappe.whitelist()
+@guarded_agent_endpoint
 def list_conversations():
     from dms.api.ai_memory import list_conversations as implementation
     return implementation()
 
 
-@frappe.whitelist(allow_guest=True)
+@frappe.whitelist()
+@guarded_agent_endpoint
 def get_conversation(conversation_id: str | None = None):
     from dms.api.ai_memory import get_conversation as implementation
     return implementation(conversation_id=conversation_id)
 
 
-@frappe.whitelist(allow_guest=True)
+@frappe.whitelist()
+@guarded_agent_endpoint
 def archive_conversation(conversation_id: str | None = None):
     from dms.api.ai_memory import archive_conversation as implementation
     return implementation(conversation_id=conversation_id)
 
 
-@frappe.whitelist(allow_guest=True)
+@frappe.whitelist()
+@guarded_agent_endpoint
 def query(
     query: str | None = None,
     conversation_id: str | None = None,

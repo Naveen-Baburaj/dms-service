@@ -129,7 +129,7 @@ def controls_fail_closed() -> bool:
 
 
 def production_auth_required() -> bool:
-    return _conf_bool("dms_production_auth_required", False)
+    return _conf_bool("dms_production_auth_required", True)
 
 
 def audit_enabled() -> bool:
@@ -254,7 +254,7 @@ def enforce_request_auth() -> dict[str, Any]:
         production_required=production_auth_required(),
     )
     if not allowed:
-        raise PermissionError(mode)
+        raise frappe.PermissionError(mode)
     return {
         "allowed": True,
         "mode": mode,
@@ -267,8 +267,6 @@ def _request_identity() -> str:
     parts = [
         _site_name(),
         _session_user(),
-        _header("x-client-user-id"),
-        _header("x-tenant-id"),
         _client_ip(),
     ]
     return _fingerprint("|".join(parts))

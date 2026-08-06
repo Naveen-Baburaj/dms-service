@@ -1,23 +1,31 @@
 'use client';
+
 import { useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { useMutation } from '@tanstack/react-query';
-import { useAuthStore } from '@/store/authStore';
+
 import { authApi } from '@/services/api/auth';
-import { tokenStorage } from '@/services/api/client';
+import { useAuthStore } from '@/store/authStore';
 import { getDashboardRoute } from '@/types';
 import type { LoginCredentials } from '@/types';
 
 export function useAuth() {
   const router = useRouter();
-  const { user, isAuthenticated, isLoading, setAuth, clearAuth, setLoading } = useAuthStore();
+  const {
+    user,
+    isAuthenticated,
+    isLoading,
+    setAuth,
+    clearAuth,
+    setLoading,
+  } = useAuthStore();
 
   const loginMutation = useMutation({
     mutationFn: authApi.login,
     onMutate: () => setLoading(true),
-    onSuccess: ({ user, tokens }) => {
-      setAuth(user, tokens);
-      router.push(getDashboardRoute(user.company));
+    onSuccess: ({ user: authenticatedUser }) => {
+      setAuth(authenticatedUser);
+      router.push(getDashboardRoute(authenticatedUser.company));
     },
     onError: () => setLoading(false),
   });
@@ -26,7 +34,6 @@ export function useAuth() {
     mutationFn: authApi.logout,
     onSettled: () => {
       clearAuth();
-      tokenStorage.clearTokens();
       router.push('/login');
     },
   });
@@ -36,7 +43,10 @@ export function useAuth() {
     [loginMutation],
   );
 
-  const logout = useCallback(() => logoutMutation.mutate(), [logoutMutation]);
+  const logout = useCallback(
+    () => logoutMutation.mutate(),
+    [logoutMutation],
+  );
 
   return {
     user,

@@ -48,10 +48,7 @@ scheduler_events = {
 # Website
 # website_route_rules = []
 
-# Authentication
-auth_hooks = [
-    "dms.api.auth.authenticate_jwt"
-]
+# Authentication is handled by Frappe's native session cookie.
 
 # Boot session
 boot_session = "dms.boot.boot_session"

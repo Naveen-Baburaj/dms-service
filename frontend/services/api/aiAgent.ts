@@ -1,10 +1,6 @@
-import { tokenStorage } from './client';
+import { csrfStorage } from './client';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://dms.localhost:8000';
-
-function isMockToken(token: string | null): boolean {
-  return Boolean(token && token.endsWith('.mock_sig'));
-}
 
 export interface FiltersApplied {
   metric?: string | null;
@@ -102,116 +98,21 @@ export interface AgentConversationDetail {
   messages: AgentConversationMessage[];
 }
 
-const ROLE_MAP: Record<string, string> = {
-  group_admin: 'service_centre_admin',
-};
-
-// Keep current frontend compatibility.
-// Backend accepts these aliases and resolves them to Honda/NEXA/Jaguar.
-const TENANT_MAP: Record<string, string> = {
-  Honda: 'toyota',
-  NEXA: 'suzuki',
-  Jaguar: 'hyundai',
-};
-
 export function resolveAgentHeaders(
-  role: string,
-  company: string,
-  clientUserId?: string,
+  _role: string,
+  _company: string,
+  _clientUserId?: string,
 ): Record<string, string> {
-  const xUserRole = ROLE_MAP[role] ?? 'tenant_user';
-
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
-    'x-user-role': xUserRole,
+    Accept: 'application/json',
   };
-
-  if (xUserRole === 'tenant_user') {
-    headers['x-tenant-id'] = TENANT_MAP[company] ?? company.toLowerCase();
-  }
-
-  if (clientUserId) {
-    headers['x-client-user-id'] = clientUserId;
-  }
-
-  const token = tokenStorage.getAccess();
-
-  // Demo mock JWTs are only for the Next.js frontend middleware.
-  // Do not send them to Frappe because Frappe will reject the fake signature.
-  if (token && !isMockToken(token)) {
-    headers.Authorization = `Bearer ${token}`;
-  }
-
+  const csrfToken = csrfStorage.get();
+  if (csrfToken) headers['X-Frappe-CSRF-Token'] = csrfToken;
   return headers;
 }
 
-type FrappeAgentEnvelope = {
-  message?: {
-    success?: boolean;
-    data?: AgentResponse;
-    message?: string;
-  } | string;
-  success?: boolean;
-  data?: AgentResponse;
-};
-
-function unwrapFrappeResponse(raw: unknown): AgentResponse {
-  const value = raw as FrappeAgentEnvelope;
-  const nestedMessage =
-    typeof value.message === 'object' && value.message !== null
-      ? value.message
-      : undefined;
-  const rootMessage = typeof value.message === 'string' ? value.message : undefined;
-
-  if (nestedMessage?.success === false) {
-    throw new Error(nestedMessage.message || 'AI agent request failed');
-  }
-
-  if (value.success === false) {
-    throw new Error(rootMessage || 'AI agent request failed');
-  }
-
-  const data = nestedMessage?.data ?? value.data ?? raw;
-
-  return data as AgentResponse;
-}
-
-export async function queryDashboardAgent(opts: {
-  query: string;
-  role: string;
-  company: string;
-  clientUserId?: string;
-  conversationId?: string | null;
-}): Promise<AgentResponse> {
-  const headers = resolveAgentHeaders(
-    opts.role,
-    opts.company,
-    opts.clientUserId,
-  );
-
-  const res = await fetch(`${API_BASE}/api/method/dms.api.ai_agent.query`, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({
-      query: opts.query,
-      conversation_id: opts.conversationId ?? '',
-    }),
-  });
-
-  const raw = await res.json().catch(() => null);
-
-  if (!res.ok) {
-    throw new Error(
-      typeof raw?.message === 'string'
-        ? raw.message
-        : `AI agent error ${res.status}`,
-    );
-  }
-
-  return unwrapFrappeResponse(raw);
-}
-
-type FrappeDataEnvelope<T> = {
+type FrappeEnvelope<T> = {
   message?: {
     success?: boolean;
     data?: T;
@@ -221,37 +122,23 @@ type FrappeDataEnvelope<T> = {
   data?: T;
 };
 
-function unwrapFrappeData<T>(raw: unknown): T {
-  const value = raw as FrappeDataEnvelope<T>;
+function unwrapFrappe<T>(raw: unknown): T {
+  const value = raw as FrappeEnvelope<T>;
   const nestedMessage =
     typeof value.message === 'object' && value.message !== null
       ? value.message
       : undefined;
-  const rootMessage =
-    typeof value.message === 'string'
-      ? value.message
-      : undefined;
-
+  const rootMessage = typeof value.message === 'string' ? value.message : undefined;
   if (nestedMessage?.success === false) {
-    throw new Error(
-      nestedMessage.message || 'AI conversation request failed',
-    );
+    throw new Error(nestedMessage.message || 'AI request failed');
   }
-
   if (value.success === false) {
-    throw new Error(
-      rootMessage || 'AI conversation request failed',
-    );
+    throw new Error(rootMessage || 'AI request failed');
   }
-
-  return (
-    nestedMessage?.data
-    ?? value.data
-    ?? raw
-  ) as T;
+  return (nestedMessage?.data ?? value.data ?? raw) as T;
 }
 
-async function conversationRequest<T>(opts: {
+async function frappeRequest<T>(opts: {
   path: string;
   method?: 'GET' | 'POST';
   role: string;
@@ -259,35 +146,41 @@ async function conversationRequest<T>(opts: {
   clientUserId?: string;
   body?: Record<string, unknown>;
 }): Promise<T> {
-  const headers = resolveAgentHeaders(
-    opts.role,
-    opts.company,
-    opts.clientUserId,
-  );
-
-  const response = await fetch(
-    `${API_BASE}/api/method/${opts.path}`,
-    {
-      method: opts.method ?? 'POST',
-      headers,
-      body:
-        (opts.method ?? 'POST') === 'GET'
-          ? undefined
-          : JSON.stringify(opts.body ?? {}),
-    },
-  );
-
+  const method = opts.method ?? 'POST';
+  const response = await fetch(`${API_BASE}/api/method/${opts.path}`, {
+    method,
+    headers: resolveAgentHeaders(opts.role, opts.company, opts.clientUserId),
+    credentials: 'include',
+    body: method === 'GET' ? undefined : JSON.stringify(opts.body ?? {}),
+  });
   const raw = await response.json().catch(() => null);
-
   if (!response.ok) {
     throw new Error(
       typeof raw?.message === 'string'
         ? raw.message
-        : `AI conversation error ${response.status}`,
+        : `DMS API error ${response.status}`,
     );
   }
+  return unwrapFrappe<T>(raw);
+}
 
-  return unwrapFrappeData<T>(raw);
+export async function queryDashboardAgent(opts: {
+  query: string;
+  role: string;
+  company: string;
+  clientUserId?: string;
+  conversationId?: string | null;
+}): Promise<AgentResponse> {
+  return frappeRequest<AgentResponse>({
+    path: 'dms.api.ai_agent.query',
+    role: opts.role,
+    company: opts.company,
+    clientUserId: opts.clientUserId,
+    body: {
+      query: opts.query,
+      conversation_id: opts.conversationId ?? '',
+    },
+  });
 }
 
 export async function createAgentConversation(opts: {
@@ -296,7 +189,7 @@ export async function createAgentConversation(opts: {
   clientUserId?: string;
   title?: string;
 }): Promise<AgentConversationSummary> {
-  return conversationRequest<AgentConversationSummary>({
+  return frappeRequest<AgentConversationSummary>({
     path: 'dms.api.ai_agent.create_conversation',
     role: opts.role,
     company: opts.company,
@@ -310,7 +203,7 @@ export async function listAgentConversations(opts: {
   company: string;
   clientUserId?: string;
 }): Promise<AgentConversationSummary[]> {
-  return conversationRequest<AgentConversationSummary[]>({
+  return frappeRequest<AgentConversationSummary[]>({
     path: 'dms.api.ai_agent.list_conversations',
     method: 'GET',
     role: opts.role,
@@ -325,7 +218,7 @@ export async function getAgentConversation(opts: {
   company: string;
   clientUserId?: string;
 }): Promise<AgentConversationDetail> {
-  return conversationRequest<AgentConversationDetail>({
+  return frappeRequest<AgentConversationDetail>({
     path: 'dms.api.ai_agent.get_conversation',
     role: opts.role,
     company: opts.company,
@@ -340,7 +233,7 @@ export async function archiveAgentConversation(opts: {
   company: string;
   clientUserId?: string;
 }): Promise<{ id: string; status: string }> {
-  return conversationRequest<{ id: string; status: string }>({
+  return frappeRequest<{ id: string; status: string }>({
     path: 'dms.api.ai_agent.archive_conversation',
     role: opts.role,
     company: opts.company,

@@ -1,0 +1,98 @@
+name: DMS Session Authentication Contracts
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  backend-auth-contracts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Compile authentication modules
+        run: |
+          python -m py_compile \
+            backend/dms/agent/context.py \
+            backend/dms/agent/controls.py \
+            backend/dms/api/auth.py \
+            backend/dms/api/ai_agent.py \
+            backend/dms/api/ai_memory.py \
+            backend/dms/auth_setup.py
+      - name: Enforce session-auth source contract
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          backend = "\n".join(
+              Path(path).read_text()
+              for path in [
+                  "backend/dms/agent/context.py",
+                  "backend/dms/api/auth.py",
+                  "backend/dms/api/ai_memory.py",
+                  "backend/dms/hooks.py",
+              ]
+          )
+          assert "authenticate_jwt" not in backend
+          assert "change-this-in-production" not in backend
+          assert "mock_sig" not in backend
+          assert "frappe.session.user" in backend
+          assert "csrf_token" in backend
+          setup = Path("backend/dms/auth_setup.py").read_text()
+          assert "def preflight_probe" in setup
+          assert "exact_dms_role" in setup
+          assert "def worker_probe" in setup
+          for role in ["Group Admin", "Honda Manager", "Honda User", "NEXA Manager", "NEXA User", "Jaguar Manager", "Jaguar User"]:
+              assert role in setup
+          print("Backend session-auth contract: PASS")
+          PY
+
+  frontend-auth-contracts:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run type-check
+      - run: npm run build
+        env:
+          NEXT_PUBLIC_API_URL: http://dms.localhost:8000
+      - name: Reject mock authority headers and JWTs
+        working-directory: .
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          paths = [
+              "frontend/services/api/client.ts",
+              "frontend/services/api/auth.ts",
+              "frontend/services/api/aiAgent.ts",
+              "frontend/middleware.ts",
+          ]
+          text = "\n".join(Path(path).read_text() for path in paths)
+          for forbidden in [
+              "x-user-role",
+              "x-tenant-id",
+              "x-client-user-id",
+              "mock_sig",
+              "MOCK_USERS",
+              "Bearer ${token}",
+          ]:
+              assert forbidden not in text, forbidden
+          assert "withCredentials: true" in text
+          assert "credentials: 'include'" in text
+          assert "X-Frappe-CSRF-Token" in text
+          assert "dms.api.auth.me" in text
+          assert "request.cookies.get(\'sid\')" in text
+          print("Frontend session-auth contract: PASS")
+          PY

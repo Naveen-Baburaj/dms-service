@@ -28,13 +28,6 @@ def _base():
     return ai_agent
 
 
-def _header(name: str) -> str | None:
-    try:
-        return frappe.get_request_header(name)
-    except Exception:
-        return None
-
-
 def _request_payload() -> dict[str, Any]:
     return _base()._data_agent_request_payload()
 
@@ -43,41 +36,38 @@ def _owner_context() -> dict[str, Any]:
     base = _base()
     is_admin, company_id, company_name = base._data_agent_current_scope()
 
-    session_user = None
     try:
-        candidate = str(frappe.session.user or "").strip()
-        if candidate and candidate != "Guest":
-            session_user = candidate
+        user = str(frappe.session.user or "").strip()
     except Exception:
-        session_user = None
+        user = ""
+    if not user or user == "Guest":
+        raise frappe.AuthenticationError(
+            "An authenticated Frappe session is required."
+        )
 
-    client_user_id = (
-        _header("x-client-user-id")
-        or _header("x-demo-user-id")
-        or ""
-    ).strip()
-
-    role = (_header("x-user-role") or "").strip()
-    tenant = (_header("x-tenant-id") or "").strip()
-
-    identity = session_user or client_user_id
-    if not identity:
-        identity = f"demo:{role or 'unknown'}:{tenant or company_name or 'unknown'}"
+    if not is_admin and (
+        not company_id or company_id == "__none__"
+    ):
+        raise frappe.PermissionError(
+            "The authenticated DMS role is not mapped to a company."
+        )
 
     owner_seed = (
-        f"{identity}|{role}|{tenant}|"
-        f"{company_id or ''}|{company_name or ''}|{int(bool(is_admin))}"
+        f"{user}|{company_id or ''}|{company_name or ''}|"
+        f"{int(bool(is_admin))}"
     )
-    owner_key = hashlib.sha256(owner_seed.encode("utf-8")).hexdigest()
+    owner_key = hashlib.sha256(
+        owner_seed.encode("utf-8")
+    ).hexdigest()
 
     if is_admin:
         scope_key = "group-admin:all-companies"
     else:
-        scope_key = f"tenant:{company_id or company_name or tenant or 'unknown'}"
+        scope_key = f"tenant:{company_id}"
 
     return {
         "owner_key": owner_key,
-        "owner_label": identity[:140],
+        "owner_label": user[:140],
         "scope_key": scope_key[:140],
         "is_group_admin": bool(is_admin),
         "company_id": company_id,

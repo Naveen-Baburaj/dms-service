@@ -20,27 +20,18 @@ export interface User {
   is_active: boolean;
 }
 
-export interface AuthTokens {
-  access_token: string;
-  refresh_token: string;
-  expires_in: number;
-  token_type: 'Bearer';
-}
-
 export interface LoginCredentials {
   email: string;
   password: string;
 }
 
-export interface LoginResponse {
+export interface SessionResponse {
   user: User;
-  tokens: AuthTokens;
+  csrf_token: string;
+  auth_mode: 'frappe_session';
 }
 
-export interface RefreshResponse {
-  access_token: string;
-  expires_in: number;
-}
+export type LoginResponse = SessionResponse;
 
 export function getDashboardRoute(company: CompanyType): string {
   const routes: Record<CompanyType, string> = {
