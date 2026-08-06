@@ -1,0 +1,34 @@
+[Unit]
+Description=DMS Next.js production frontend
+Requires=@BENCH_NAME@-frappe-web.service
+After=network-online.target @BENCH_NAME@-frappe-web.service
+PartOf=dms-dashboard.target
+
+[Service]
+Type=simple
+User=@USER@
+Group=@GROUP@
+WorkingDirectory=@FRONTEND@
+Environment=HOME=@HOME@
+Environment=NODE_ENV=production
+Environment=NEXT_PUBLIC_API_URL=http://dms.localhost:8000
+Environment=DMS_INTERNAL_API_URL=http://127.0.0.1:8000
+Environment=DMS_FRAPPE_SITE=@SITE@
+ExecStartPre=/usr/bin/test -f @FRONTEND@/.next/BUILD_ID
+ExecStart=@NODE@ @NEXT@ start -H 127.0.0.1 -p 3000
+Restart=always
+RestartSec=5
+TimeoutStartSec=90
+TimeoutStopSec=30
+KillSignal=SIGTERM
+SuccessExitStatus=143
+UMask=0027
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=dms-dashboard-frontend
+
+[Install]
+WantedBy=dms-dashboard.target

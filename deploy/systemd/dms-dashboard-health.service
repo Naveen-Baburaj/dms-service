@@ -1,0 +1,20 @@
+[Unit]
+Description=DMS Dashboard end-to-end health check
+Requires=dms-dashboard.target
+After=dms-dashboard.target
+OnFailure=dms-dashboard-recover.service
+
+[Service]
+Type=oneshot
+User=@USER@
+Group=@GROUP@
+WorkingDirectory=@REPO@
+Environment=HOME=@HOME@
+ExecStart=@PYTHON@ @REPO@/scripts/dms_ops_healthcheck.py --repo @REPO@ --bench @BENCH@ --site @SITE@ --bench-command @BENCH_COMMAND@ @HEALTH_UNITS@
+TimeoutStartSec=90
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=dms-dashboard-health

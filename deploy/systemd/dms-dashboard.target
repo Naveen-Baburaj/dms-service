@@ -1,0 +1,8 @@
+[Unit]
+Description=DMS Dashboard supervised runtime
+Requires=mariadb.service @BENCH_NAME@.target @BENCH_NAME@-frappe-schedule.service dms-dashboard-frontend.service
+After=network-online.target mariadb.service @BENCH_NAME@.target @BENCH_NAME@-frappe-schedule.service
+Wants=dms-dashboard-health.timer
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,14 @@
+[Unit]
+Description=Run the DMS Dashboard health check periodically
+PartOf=dms-dashboard.target
+After=dms-dashboard.target
+
+[Timer]
+OnActiveSec=90s
+OnUnitInactiveSec=5min
+RandomizedDelaySec=20s
+AccuracySec=15s
+Unit=dms-dashboard-health.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,13 @@
+[Unit]
+Description=Recover the DMS Dashboard after a failed health check
+After=network-online.target mariadb.service
+StartLimitIntervalSec=15min
+StartLimitBurst=3
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/systemctl restart dms-dashboard.target
+ExecStartPost=/bin/sleep 8
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=dms-dashboard-recover
