@@ -1,6 +1,8 @@
 import axios, { AxiosInstance, AxiosResponse } from 'axios';
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://dms.localhost:8000';
+// Production defaults to the same-origin Next.js /api proxy. Local development
+// can continue to set NEXT_PUBLIC_API_URL=http://dms.localhost:8000 in .env.local.
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? '';
 const CSRF_TOKEN_KEY = 'dms_csrf_token';
 
 export const csrfStorage = {
