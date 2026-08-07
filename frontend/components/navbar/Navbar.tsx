@@ -1,5 +1,5 @@
 'use client';
-import { Bell, Search, LogOut, User, ChevronDown } from 'lucide-react';
+import { Search, LogOut, User, ChevronDown } from 'lucide-react';
 import { useState } from 'react';
 import { useAuth } from '@/hooks/useAuth';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
@@ -70,13 +70,6 @@ export function Navbar() {
         <div className="hidden lg:flex items-center border-r border-border pr-3">
           <span className="text-sm font-bold uppercase tracking-wide text-foreground">GENBYTE.AI</span>
         </div>
-
-        {/* Notifications */}
-        <button className="relative flex h-9 w-9 items-center justify-center rounded-lg hover:bg-muted transition-colors">
-          <Bell className="h-4 w-4" />
-          <span className="absolute top-1.5 right-1.5 h-2 w-2 rounded-full bg-honda" />
-          <span className="sr-only">Notifications</span>
-        </button>
 
         {/* Profile */}
         <DropdownMenu>
