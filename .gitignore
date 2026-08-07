@@ -42,3 +42,10 @@ ghl_storage_state.json
 backend/.env
 # TypeScript incremental build cache
 *.tsbuildinfo
+
+# Frappe backup artifacts (database + site config may contain sensitive data)
+*-database.sql
+*-database.sql.gz
+*-site_config_backup.json
+*-private-files.tgz
+*-files.tgz
