@@ -1,12 +1,13 @@
 from frappe import _
 
 app_name = "dms"
-app_title = "Dealer Management System"
-app_publisher = "DMS Group"
+app_title = "Genbyte Dealer Management System"
+app_publisher = "Genbyte"
 app_description = "Enterprise Dealer Management System for multi-brand automotive dealer groups"
 app_version = "1.0.0"
 app_email = "admin@dmsgroup.com"
 app_license = "MIT"
+app_logo_url = "/assets/dms/images/genbyte-logo.png"
 
 # DocType permissions
 # Each DocType has company_id field used for row-level security

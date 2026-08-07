@@ -67,37 +67,6 @@ export interface AgentResponse {
   snapshot_source_hash?: string;
 }
 
-export interface AgentConversationSummary {
-  id: string;
-  title: string;
-  company_name?: string | null;
-  is_group_admin: boolean;
-  message_count: number;
-  memory_summary?: string;
-  last_intent?: string;
-  last_resource?: string;
-  last_message_at?: string;
-  created_at?: string;
-  updated_at?: string;
-  status: string;
-}
-
-export interface AgentConversationMessage {
-  id: string;
-  role: 'user' | 'assistant';
-  content: string;
-  timestamp: string;
-  sequence_no: number;
-  intent?: string;
-  agent_data?: AgentResponse | null;
-  error?: boolean;
-}
-
-export interface AgentConversationDetail {
-  conversation: AgentConversationSummary;
-  messages: AgentConversationMessage[];
-}
-
 export function resolveAgentHeaders(
   _role: string,
   _company: string,
@@ -180,64 +149,5 @@ export async function queryDashboardAgent(opts: {
       query: opts.query,
       conversation_id: opts.conversationId ?? '',
     },
-  });
-}
-
-export async function createAgentConversation(opts: {
-  role: string;
-  company: string;
-  clientUserId?: string;
-  title?: string;
-}): Promise<AgentConversationSummary> {
-  return frappeRequest<AgentConversationSummary>({
-    path: 'dms.api.ai_agent.create_conversation',
-    role: opts.role,
-    company: opts.company,
-    clientUserId: opts.clientUserId,
-    body: { title: opts.title ?? '' },
-  });
-}
-
-export async function listAgentConversations(opts: {
-  role: string;
-  company: string;
-  clientUserId?: string;
-}): Promise<AgentConversationSummary[]> {
-  return frappeRequest<AgentConversationSummary[]>({
-    path: 'dms.api.ai_agent.list_conversations',
-    method: 'GET',
-    role: opts.role,
-    company: opts.company,
-    clientUserId: opts.clientUserId,
-  });
-}
-
-export async function getAgentConversation(opts: {
-  conversationId: string;
-  role: string;
-  company: string;
-  clientUserId?: string;
-}): Promise<AgentConversationDetail> {
-  return frappeRequest<AgentConversationDetail>({
-    path: 'dms.api.ai_agent.get_conversation',
-    role: opts.role,
-    company: opts.company,
-    clientUserId: opts.clientUserId,
-    body: { conversation_id: opts.conversationId },
-  });
-}
-
-export async function archiveAgentConversation(opts: {
-  conversationId: string;
-  role: string;
-  company: string;
-  clientUserId?: string;
-}): Promise<{ id: string; status: string }> {
-  return frappeRequest<{ id: string; status: string }>({
-    path: 'dms.api.ai_agent.archive_conversation',
-    role: opts.role,
-    company: opts.company,
-    clientUserId: opts.clientUserId,
-    body: { conversation_id: opts.conversationId },
   });
 }

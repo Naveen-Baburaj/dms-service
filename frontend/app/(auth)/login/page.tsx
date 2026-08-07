@@ -19,7 +19,6 @@ export default function LoginPage() {
     const errs: Partial<LoginCredentials> = {};
     if (!credentials.email) errs.email = 'Email is required';
     else if (!/^\S+@\S+\.\S+$/.test(credentials.email)) errs.email = 'Invalid email';
-    if (!credentials.password) errs.password = 'Password is required';
     setErrors(errs);
     return Object.keys(errs).length === 0;
   }
@@ -50,7 +49,7 @@ export default function LoginPage() {
           <CardHeader className="space-y-1 pb-4">
             <CardTitle className="text-xl text-white">Sign in</CardTitle>
             <CardDescription className="text-slate-400">
-              Enter your credentials to access your dashboard
+              Demo access: enter one of the approved internal email addresses
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -73,12 +72,12 @@ export default function LoginPage() {
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="password" className="text-slate-300">Password</Label>
+                <Label htmlFor="password" className="text-slate-300">Password <span className="text-slate-500">(optional for demo)</span></Label>
                 <div className="relative">
                   <Input
                     id="password"
                     type={showPassword ? 'text' : 'password'}
-                    placeholder="••••••••"
+                    placeholder="Not required for demo"
                     autoComplete="current-password"
                     value={credentials.password}
                     onChange={(e) => setCredentials((p) => ({ ...p, password: e.target.value }))}

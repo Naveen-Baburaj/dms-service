@@ -3,9 +3,9 @@ import type { LoginCredentials, LoginResponse, SessionResponse, User } from '@/t
 
 export const authApi = {
   login: async (credentials: LoginCredentials): Promise<LoginResponse> => {
-    const { data } = await apiClient.post(
-      '/method/dms.api.auth.login',
-      credentials,
+    const { data } = await apiClient.get(
+      '/method/dms.api.auth.demo_login',
+      { params: { email: credentials.email.trim().toLowerCase() } },
     );
     const result = unwrapFrappe<LoginResponse>(data);
     csrfStorage.set(result.csrf_token);

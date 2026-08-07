@@ -1,11 +1,7 @@
 'use client';
 import { useState, useRef, useEffect } from 'react';
 import {
-  Send, Plus, Bot, Sparkles, Car, TrendingUp,
-  Users,
-  Paperclip, Mic, RotateCcw, ThumbsUp, ThumbsDown, Copy,
-  MessageSquare, Clock, Star, AlertCircle,
-  PhoneCall, Workflow, Database, Cloud, CheckCircle2, Loader2, ShieldCheck,
+  Send, Plus, Bot, Sparkles, RotateCcw, ThumbsUp, ThumbsDown, Copy, Clock, Star, AlertCircle, PhoneCall, ShieldCheck,
 } from 'lucide-react';
 import {
   AreaChart, Area, BarChart, Bar, PieChart, Pie, Cell, Legend,
@@ -16,18 +12,13 @@ import { useAuthStore } from '@/store/authStore';
 import type { User } from '@/types';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { RpaSavedContactsTable } from '@/components/rpa/RpaSavedContactsTable';
 import {
   queryDashboardAgent,
-  listAgentConversations,
-  getAgentConversation,
   type AgentResponse,
   type FiltersApplied,
-  type AgentConversationSummary,
   type AnalyticalViewPayload,
   type AnalyticalMeasure,
 } from '@/services/api/aiAgent';
-import { checkGhlSession, openGhlLogin, saveRpaContact, type RpaContactPayload, type RpaSaveResult, type RpaSaveTarget } from '@/services/api/rpaGhl';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface Message {
@@ -40,45 +31,9 @@ interface Message {
 }
 
 
-const SUGGESTED_PROMPTS = [
-  { icon: TrendingUp, label: "Sales in last 5 months for Honda and NEXA", color: 'text-emerald-500' },
-  { icon: Users, label: "What is the phone number of John Kurien?", color: 'text-blue-500' },
-  { icon: Car, label: "What is the current inventory stock?", color: 'text-orange-500' },
-  { icon: MessageSquare, label: "Show all charts for the last 4 months", color: 'text-purple-500' },
-];
 
 
-type WorkspaceModule = 'chat' | 'voice' | 'rpa';
-
-type RpaPhase = 'idle' | 'validating' | 'session' | 'login' | 'saving' | 'syncing' | 'success' | 'error';
-
-interface RpaProgressState {
-  phase: RpaPhase;
-  percent: number;
-  label: string;
-  detail: string;
-}
-
-const RPA_TARGETS: { value: RpaSaveTarget; label: string; description: string; icon: typeof Database }[] = [
-  {
-    value: 'dms',
-    label: 'DMS Backend',
-    description: 'Save locally in Frappe/DMS only.',
-    icon: Database,
-  },
-  {
-    value: 'ghl',
-    label: 'GHL CRM',
-    description: 'Create in GoHighLevel only.',
-    icon: Cloud,
-  },
-  {
-    value: 'both',
-    label: 'Both',
-    description: 'Save in DMS first, then sync to GHL CRM.',
-    icon: Workflow,
-  },
-];
+type WorkspaceModule = 'chat' | 'voice';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function formatTime(date: Date): string {
@@ -102,14 +57,43 @@ function resolveAccessScope(user: User | null): string {
 
 function displayAssistantText(data: AgentResponse): string {
   if (data.intent === 'backend_llm_error') {
-    return 'Sorry, the backend LLM is not working right now. Please try again shortly.';
+    return 'Backend LLM is currently unavailable. Please try again later.';
   }
-  return data.text_response;
+
+  const analytical = data.widget_payloads?.analytical_view as
+    | AnalyticalViewPayload
+    | undefined;
+  const hasVerifiedRows = Boolean(
+    analytical?.dataset?.rows?.length,
+  );
+  const answer = String(data.text_response ?? '').trim();
+
+  if (
+    hasVerifiedRows
+    && (
+      !answer
+      || answer.startsWith(
+        'I could not find a matching answer in the authorised DMS data.',
+      )
+    )
+  ) {
+    const title =
+      analytical?.view?.title
+      ?? analytical?.dataset?.title
+      ?? 'DMS analysis';
+    const rowCount =
+      analytical?.dataset?.row_count
+      ?? analytical?.dataset?.rows?.length
+      ?? 0;
+    return `Showing ${title} from ${rowCount} verified database row(s).`;
+  }
+
+  return answer;
 }
 
 function formatIntentBadge(intent?: string): string {
   if (!intent) return '';
-  if (intent === 'backend_llm_error') return 'AI SERVICE ERROR';
+  if (intent === 'backend_llm_error') return 'BACKEND LLM UNAVAILABLE';
   return intent.replace(/_/g, ' ');
 }
 
@@ -763,6 +747,62 @@ function AnalyticalViewWidget({ payload }: { payload: unknown }) {
         </ResponsiveContainer>
       )}
 
+      {/* DMS_DEMO_ANALYTICS_TABLE_V1:
+          Analytical charts always include the exact source rows below them. */}
+      {view?.type !== 'table' && (
+        <div className="mt-4 overflow-auto rounded-lg border border-border/40">
+          <div className="border-b border-border/40 bg-muted/20 px-3 py-2">
+            <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+              Verified data table
+            </p>
+            <p className="mt-0.5 text-[9px] text-muted-foreground">
+              Same rows and totals used by the chart
+            </p>
+          </div>
+          <table className="w-full min-w-max text-xs">
+            <thead className="bg-background">
+              <tr className="border-b border-border/50">
+                {columns.map((column) => (
+                  <th
+                    key={column.key}
+                    className="px-2 py-2 text-left font-medium text-muted-foreground"
+                  >
+                    {column.label}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row, index) => (
+                <tr
+                  key={index}
+                  className="border-b border-border/30 last:border-0"
+                >
+                  {columns.map((column) => {
+                    const measureSpec = measures.find(
+                      (item) => item.key === column.key,
+                    );
+                    return (
+                      <td
+                        key={column.key}
+                        className="px-2 py-2"
+                      >
+                        {measureSpec
+                          ? formatValue(
+                              row[column.key],
+                              measureSpec,
+                            )
+                          : String(row[column.key] ?? '—')}
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
       <p className="mt-2 break-all text-[9px] text-muted-foreground/70">
         Snapshot {p.snapshot_id} · Source{' '}
         {p.source_hash.slice(0, 12)}
@@ -1039,430 +1079,6 @@ function MessageContent({ text }: { text: string }) {
 }
 
 
-function normalizeRpaPhone(value: string): string {
-  return value.replace(/\D/g, '').slice(-10);
-}
-
-function defaultRpaForm(): RpaContactPayload {
-  return {
-    first_name: '',
-    last_name: '',
-    email: '',
-    phone: '',
-    vehicle_interest: '',
-    source: 'DMS Dashboard RPA',
-    notes: '',
-  };
-}
-
-function RpaAgentPanel({ user }: { user: User | null }) {
-  const [form, setForm] = useState<RpaContactPayload>(() => defaultRpaForm());
-  const [target, setTarget] = useState<RpaSaveTarget>('both');
-  const [progress, setProgress] = useState<RpaProgressState>({
-    phase: 'idle',
-    percent: 0,
-    label: 'Ready',
-    detail: 'Enter contact details and choose where to save the record.',
-  });
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [result, setResult] = useState<RpaSaveResult | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [contactsRefreshKey, setContactsRefreshKey] = useState(0);
-
-  const role = resolveRole(user);
-  const company = resolveCompany(user);
-  const needsGhl = target === 'ghl' || target === 'both';
-  const isGroupAdmin = user?.role === 'group_admin' || user?.company === 'Group';
-
-  function updateField(field: keyof RpaContactPayload, value: string) {
-    setForm((prev) => ({
-      ...prev,
-      [field]: field === 'phone' ? normalizeRpaPhone(value) : value,
-    }));
-  }
-
-  function validateForm(): string | null {
-    if (!isGroupAdmin) return 'GoHighLevel RPA is available only for the full admin account.';
-    if (!form.first_name?.trim()) return 'First name is required.';
-    if (!form.email?.trim() && !form.phone?.trim()) return 'Add at least an email or a 10-digit phone number.';
-    if (form.phone && !/^\d{10}$/.test(form.phone)) return 'Phone must be exactly 10 digits without country code or plus sign.';
-    return null;
-  }
-
-  function setStage(phase: RpaPhase, percent: number, label: string, detail: string) {
-    setProgress({ phase, percent, label, detail });
-  }
-
-  async function submitRpa() {
-    const validationError = validateForm();
-    if (validationError) {
-      setError(validationError);
-      setProgress({ phase: 'error', percent: 0, label: 'Input issue', detail: validationError });
-      return;
-    }
-
-    setIsSubmitting(true);
-    setResult(null);
-    setError(null);
-
-    try {
-      setStage('validating', 8, 'Preparing contact', 'Validating form details and save target.');
-
-      if (needsGhl) {
-        setStage('session', 18, 'Checking GHL session', 'Looking for an existing saved GoHighLevel browser session.');
-        const session = await checkGhlSession({ role, company, deepCheck: false });
-
-        if (!session.storage_state_exists) {
-          setStage(
-            'login',
-            30,
-            'Waiting for GoHighLevel login',
-            'A browser login window should open. Complete login and security verification there.',
-          );
-          await openGhlLogin({ role, company, timeoutSeconds: 600 });
-        }
-
-        setStage('syncing', 55, 'Starting hidden CRM sync', 'After login, the backend runs the GHL contact creation in a hidden browser session.');
-      } else {
-        setStage('saving', 45, 'Saving to DMS', 'Creating the contact in the local DMS backend.');
-      }
-
-      setStage(needsGhl ? 'syncing' : 'saving', needsGhl ? 72 : 70, needsGhl ? 'Syncing with GHL CRM' : 'Saving locally', needsGhl ? 'Creating the GHL contact, assigning tag, and verifying the result.' : 'Creating the local DMS CRM Contact.');
-
-      const saved = await saveRpaContact({
-        role,
-        company,
-        target,
-        contact: {
-          ...form,
-          first_name: form.first_name.trim(),
-          last_name: form.last_name?.trim() ?? '',
-          email: form.email?.trim() ?? '',
-          phone: normalizeRpaPhone(form.phone ?? ''),
-          vehicle_interest: form.vehicle_interest?.trim() ?? '',
-          source: form.source?.trim() || 'DMS Dashboard RPA',
-          notes: form.notes?.trim() ?? '',
-        },
-      });
-
-      if (needsGhl && saved.status !== 'Success') {
-        throw new Error(saved.message || 'GHL CRM sync did not complete successfully.');
-      }
-
-      if (!needsGhl && saved.status !== 'Success') {
-        throw new Error(saved.message || 'DMS save did not complete successfully.');
-      }
-
-      setResult(saved);
-      setContactsRefreshKey((key) => key + 1);
-      setStage(
-        'success',
-        100,
-        target === 'dms' ? 'Saved to DMS' : target === 'ghl' ? 'Saved to GHL CRM' : 'Saved to DMS and GHL CRM',
-        'Contact is ready. Backend returned final success confirmation.',
-      );
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'RPA operation failed.';
-      setError(message);
-      setStage('error', 100, 'Operation failed', message);
-    } finally {
-      setIsSubmitting(false);
-    }
-  }
-
-  function resetForm() {
-    setForm(defaultRpaForm());
-    setTarget('both');
-    setResult(null);
-    setError(null);
-    setProgress({
-      phase: 'idle',
-      percent: 0,
-      label: 'Ready',
-      detail: 'Enter contact details and choose where to save the record.',
-    });
-  }
-
-  const progressTone =
-    progress.phase === 'success'
-      ? 'bg-emerald-500'
-      : progress.phase === 'error'
-        ? 'bg-red-500'
-        : 'bg-violet-500';
-
-  return (
-    <div className="flex h-full flex-col bg-background">
-      <div className="border-b border-border bg-card/50 px-6 py-4">
-        <div className="mx-auto flex max-w-5xl items-center justify-between gap-4">
-          <div>
-            <div className="mb-1 flex items-center gap-2 text-xs font-medium uppercase tracking-wider text-violet-500">
-              <Workflow className="h-3.5 w-3.5" />
-              Clutch
-            </div>
-            <h1 className="text-xl font-semibold text-foreground">GoHighLevel Contact Automation</h1>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Admin-only workflow to save contacts in DMS, GoHighLevel CRM, or both.
-            </p>
-          </div>
-          <div className="hidden rounded-xl border border-emerald-500/20 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-600 md:block">
-            <div className="flex items-center gap-2">
-              <ShieldCheck className="h-4 w-4" />
-              Backend-guarded admin access
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <ScrollArea className="flex-1">
-        <div className="mx-auto grid max-w-5xl gap-5 p-6 lg:grid-cols-[1.4fr_0.9fr]">
-          <div className="rounded-2xl border border-border bg-card p-5 shadow-sm">
-            <div className="mb-5 flex items-center justify-between gap-3">
-              <div>
-                <h2 className="text-base font-semibold text-foreground">Contact details</h2>
-                <p className="text-xs text-muted-foreground">Phone is sent as plain 10 digits. No plus sign or country code.</p>
-              </div>
-              <button
-                type="button"
-                onClick={resetForm}
-                disabled={isSubmitting}
-                className="rounded-lg border border-border px-3 py-1.5 text-xs text-muted-foreground hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                Reset
-              </button>
-            </div>
-
-            <div className="grid gap-4 md:grid-cols-2">
-              <label className="space-y-1.5">
-                <span className="text-xs font-medium text-foreground">First name *</span>
-                <input
-                  value={form.first_name}
-                  onChange={(e) => updateField('first_name', e.target.value)}
-                  disabled={isSubmitting}
-                  className="w-full rounded-xl border border-border bg-background px-3 py-2.5 text-sm outline-none transition focus:border-violet-500 disabled:opacity-60"
-                  placeholder="Arjun"
-                />
-              </label>
-
-              <label className="space-y-1.5">
-                <span className="text-xs font-medium text-foreground">Last name</span>
-                <input
-                  value={form.last_name ?? ''}
-                  onChange={(e) => updateField('last_name', e.target.value)}
-                  disabled={isSubmitting}
-                  className="w-full rounded-xl border border-border bg-background px-3 py-2.5 text-sm outline-none transition focus:border-violet-500 disabled:opacity-60"
-                  placeholder="Pillai"
-                />
-              </label>
-
-              <label className="space-y-1.5">
-                <span className="text-xs font-medium text-foreground">Email</span>
-                <input
-                  value={form.email ?? ''}
-                  onChange={(e) => updateField('email', e.target.value)}
-                  disabled={isSubmitting}
-                  className="w-full rounded-xl border border-border bg-background px-3 py-2.5 text-sm outline-none transition focus:border-violet-500 disabled:opacity-60"
-                  placeholder="arjun@example.com"
-                />
-              </label>
-
-              <label className="space-y-1.5">
-                <span className="text-xs font-medium text-foreground">Phone</span>
-                <input
-                  value={form.phone ?? ''}
-                  onChange={(e) => updateField('phone', e.target.value)}
-                  disabled={isSubmitting}
-                  inputMode="numeric"
-                  maxLength={10}
-                  className="w-full rounded-xl border border-border bg-background px-3 py-2.5 text-sm outline-none transition focus:border-violet-500 disabled:opacity-60"
-                  placeholder="9876543210"
-                />
-              </label>
-
-              <label className="space-y-1.5">
-                <span className="text-xs font-medium text-foreground">Vehicle interest</span>
-                <input
-                  value={form.vehicle_interest ?? ''}
-                  onChange={(e) => updateField('vehicle_interest', e.target.value)}
-                  disabled={isSubmitting}
-                  className="w-full rounded-xl border border-border bg-background px-3 py-2.5 text-sm outline-none transition focus:border-violet-500 disabled:opacity-60"
-                  placeholder="Honda City"
-                />
-              </label>
-
-              <label className="space-y-1.5">
-                <span className="text-xs font-medium text-foreground">Source</span>
-                <input
-                  value={form.source ?? ''}
-                  onChange={(e) => updateField('source', e.target.value)}
-                  disabled={isSubmitting}
-                  className="w-full rounded-xl border border-border bg-background px-3 py-2.5 text-sm outline-none transition focus:border-violet-500 disabled:opacity-60"
-                  placeholder="DMS Dashboard RPA"
-                />
-              </label>
-
-              <label className="space-y-1.5 md:col-span-2">
-                <span className="text-xs font-medium text-foreground">Notes</span>
-                <textarea
-                  value={form.notes ?? ''}
-                  onChange={(e) => updateField('notes', e.target.value)}
-                  disabled={isSubmitting}
-                  rows={4}
-                  className="w-full resize-none rounded-xl border border-border bg-background px-3 py-2.5 text-sm outline-none transition focus:border-violet-500 disabled:opacity-60"
-                  placeholder="Lead source, requirement, or follow-up notes"
-                />
-              </label>
-            </div>
-
-            <div className="mt-6">
-              <p className="mb-2 text-xs font-medium text-foreground">Save target</p>
-              <div className="grid gap-3 md:grid-cols-3">
-                {RPA_TARGETS.map((option) => {
-                  const Icon = option.icon;
-                  const active = target === option.value;
-                  return (
-                    <button
-                      key={option.value}
-                      type="button"
-                      onClick={() => setTarget(option.value)}
-                      disabled={isSubmitting}
-                      className={cn(
-                        'rounded-xl border p-3 text-left transition disabled:cursor-not-allowed disabled:opacity-60',
-                        active
-                          ? 'border-violet-500 bg-violet-500/10 shadow-sm'
-                          : 'border-border bg-background hover:bg-accent',
-                      )}
-                    >
-                      <div className="mb-2 flex items-center gap-2">
-                        <Icon className={cn('h-4 w-4', active ? 'text-violet-500' : 'text-muted-foreground')} />
-                        <span className="text-sm font-semibold">{option.label}</span>
-                      </div>
-                      <p className="text-[11px] leading-relaxed text-muted-foreground">{option.description}</p>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <p className="text-xs text-muted-foreground">
-                GHL login appears only when no saved session exists. After login, sync runs hidden in the backend.
-              </p>
-              <button
-                type="button"
-                onClick={submitRpa}
-                disabled={isSubmitting}
-                className={cn(
-                  'inline-flex items-center justify-center gap-2 rounded-xl px-5 py-2.5 text-sm font-semibold text-white transition',
-                  isSubmitting
-                    ? 'cursor-not-allowed bg-violet-500/70'
-                    : 'bg-gradient-to-br from-violet-500 to-indigo-600 shadow-md shadow-violet-500/25 hover:shadow-lg',
-                )}
-              >
-                {isSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Workflow className="h-4 w-4" />}
-                {isSubmitting ? 'Processing...' : 'Run RPA Save'}
-              </button>
-            </div>
-          </div>
-
-          <div className="space-y-4">
-            <div className="rounded-2xl border border-border bg-card p-5 shadow-sm">
-              <div className="mb-4 flex items-start justify-between gap-3">
-                <div>
-                  <h2 className="text-base font-semibold text-foreground">Progress</h2>
-                  <p className="text-xs text-muted-foreground">100% is shown only after backend final success.</p>
-                </div>
-                <div className={cn(
-                  'flex h-10 w-10 items-center justify-center rounded-xl',
-                  progress.phase === 'success'
-                    ? 'bg-emerald-500/10 text-emerald-500'
-                    : progress.phase === 'error'
-                      ? 'bg-red-500/10 text-red-500'
-                      : 'bg-violet-500/10 text-violet-500',
-                )}>
-                  {progress.phase === 'success'
-                    ? <CheckCircle2 className="h-5 w-5" />
-                    : progress.phase === 'error'
-                      ? <AlertCircle className="h-5 w-5" />
-                      : isSubmitting
-                        ? <Loader2 className="h-5 w-5 animate-spin" />
-                        : <Workflow className="h-5 w-5" />}
-                </div>
-              </div>
-
-              <div className="mb-3 h-2 overflow-hidden rounded-full bg-muted">
-                <div
-                  className={cn('h-full rounded-full transition-all duration-700', progressTone)}
-                  style={{ width: `${progress.percent}%` }}
-                />
-              </div>
-
-              <div className="flex items-center justify-between text-xs">
-                <span className="font-semibold text-foreground">{progress.label}</span>
-                <span className="font-mono text-muted-foreground">{progress.percent}%</span>
-              </div>
-              <p className="mt-2 text-xs leading-relaxed text-muted-foreground">{progress.detail}</p>
-
-              {isSubmitting && (
-                <div className="mt-4 rounded-xl border border-violet-500/20 bg-violet-500/10 p-3 text-xs text-violet-600">
-                  Sync is running in the backend. You can keep this dashboard open; do not interact with the backend browser window.
-                </div>
-              )}
-
-              {error && (
-                <div className="mt-4 rounded-xl border border-red-500/20 bg-red-500/10 p-3 text-xs text-red-600">
-                  {error}
-                </div>
-              )}
-            </div>
-
-            {result && (
-              <div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/10 p-5 shadow-sm">
-                <div className="mb-3 flex items-center gap-2 text-emerald-600">
-                  <CheckCircle2 className="h-5 w-5" />
-                  <h2 className="text-sm font-semibold">Save completed</h2>
-                </div>
-                <div className="space-y-2 text-xs">
-                  <div className="flex justify-between gap-3">
-                    <span className="text-muted-foreground">Status</span>
-                    <span className="font-semibold text-foreground">{result.status}</span>
-                  </div>
-                  {result.dms_contact && (
-                    <div className="flex justify-between gap-3">
-                      <span className="text-muted-foreground">DMS Contact</span>
-                      <span className="font-mono text-foreground">{result.dms_contact}</span>
-                    </div>
-                  )}
-                  {result.rpa_job && (
-                    <div className="flex justify-between gap-3">
-                      <span className="text-muted-foreground">RPA Job</span>
-                      <span className="font-mono text-foreground">{result.rpa_job}</span>
-                    </div>
-                  )}
-                  <div className="pt-2 text-muted-foreground">{result.message}</div>
-                </div>
-              </div>
-            )}
-
-            <div className="rounded-2xl border border-border bg-card p-5 text-xs text-muted-foreground">
-              <h3 className="mb-2 text-sm font-semibold text-foreground">Execution notes</h3>
-              <ul className="space-y-2">
-                <li className="flex gap-2"><span className="mt-1 h-1.5 w-1.5 rounded-full bg-violet-500" /> Tenant users cannot access this module.</li>
-                <li className="flex gap-2"><span className="mt-1 h-1.5 w-1.5 rounded-full bg-violet-500" /> GHL sync uses the backend session and verified tag assignment.</li>
-                <li className="flex gap-2"><span className="mt-1 h-1.5 w-1.5 rounded-full bg-violet-500" /> Phone is normalized to 10 digits before sending to RPA.</li>
-              </ul>
-            </div>
-          </div>
-
-          <div className="lg:col-span-2">
-            <RpaSavedContactsTable role={role} company={company} refreshSignal={contactsRefreshKey} />
-          </div>
-        </div>
-      </ScrollArea>
-    </div>
-  );
-}
-
-
 function AiAmbientBackground() {
   return (
     <div className="pointer-events-none absolute inset-0 z-0 overflow-hidden" aria-hidden="true">
@@ -1551,10 +1167,7 @@ export default function ChatPage() {
   const [input, setInput] = useState('');
   const [isTyping, setIsTyping] = useState(false);
   const [activeModule, setActiveModule] = useState<WorkspaceModule>('chat');
-  const [conversations, setConversations] = useState<AgentConversationSummary[]>([]);
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
-  const [activeConversationTitle, setActiveConversationTitle] = useState('New conversation');
-  const [isLoadingConversation, setIsLoadingConversation] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -1562,33 +1175,7 @@ export default function ChatPage() {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, isTyping]);
 
-  useEffect(() => {
-    if (!user?.id) return;
 
-    let cancelled = false;
-
-    async function hydrateConversations() {
-      try {
-        const items = await listAgentConversations({
-          role: resolveRole(user),
-          company: resolveCompany(user),
-          clientUserId: user?.id ?? user?.email,
-        });
-
-        if (cancelled) return;
-        setConversations(items);
-
-        if (items.length > 0) {
-          await openConversation(items[0].id);
-        }
-      } catch {
-        if (!cancelled) setConversations([]);
-      }
-    }
-
-    hydrateConversations();
-    return () => { cancelled = true; };
-  }, [user?.id]);
 
   function autoResize() {
     const el = textareaRef.current;
@@ -1600,55 +1187,12 @@ export default function ChatPage() {
   function startNewChat() {
     setActiveModule('chat');
     setActiveConversationId(null);
-    setActiveConversationTitle('New conversation');
     setMessages([]);
     setInput('');
   }
 
-  async function refreshConversationList() {
-    if (!user?.id) return;
-
-    const items = await listAgentConversations({
-      role: resolveRole(user),
-      company: resolveCompany(user),
-      clientUserId: user?.id ?? user?.email,
-    });
-    setConversations(items);
-  }
-
-  async function openConversation(conversationId: string) {
-    if (!user?.id || isTyping) return;
-
-    setActiveModule('chat');
-    setIsLoadingConversation(true);
-
-    try {
-      const detail = await getAgentConversation({
-        conversationId,
-        role: resolveRole(user),
-        company: resolveCompany(user),
-        clientUserId: user?.id ?? user?.email,
-      });
-
-      setActiveConversationId(detail.conversation.id);
-      setActiveConversationTitle(detail.conversation.title);
-      setMessages(
-        detail.messages.map((message) => ({
-          id: message.id,
-          role: message.role,
-          content: message.content,
-          timestamp: new Date(message.timestamp),
-          agentData: message.agent_data ?? undefined,
-          error: Boolean(message.error),
-        })),
-      );
-    } finally {
-      setIsLoadingConversation(false);
-    }
-  }
-
   async function sendMessage(text: string) {
-    if (!text.trim() || isTyping || isLoadingConversation) return;
+    if (!text.trim() || isTyping) return;
 
     const userMsg: Message = {
       id: Date.now().toString(),
@@ -1672,8 +1216,6 @@ export default function ChatPage() {
       });
 
       if (data.conversation_id) setActiveConversationId(data.conversation_id);
-      if (data.conversation_title) setActiveConversationTitle(data.conversation_title);
-
       setMessages((prev) => [
         ...prev,
         {
@@ -1685,19 +1227,13 @@ export default function ChatPage() {
         },
       ]);
 
-      try {
-        await refreshConversationList();
-      } catch {
-        // The answer is already complete; a sidebar refresh failure must not
-        // turn a successful AI response into an error message.
-      }
     } catch {
       setMessages((prev) => [
         ...prev,
         {
           id: (Date.now() + 1).toString(),
           role: 'assistant',
-          content: 'Unable to reach the backend AI service. Please make sure the backend is running and try again.',
+          content: 'Backend LLM is currently unavailable. Please try again later.',
           timestamp: new Date(),
           error: true,
         },
@@ -1716,7 +1252,6 @@ export default function ChatPage() {
 
 
   const initials = user?.full_name?.split(' ').map((n) => n[0]).join('').slice(0, 2) ?? 'U';
-  const isRpaAdmin = user?.role === 'group_admin' || user?.company === 'Group';
   const accessScope = resolveAccessScope(user);
 
   return (
@@ -1728,7 +1263,7 @@ export default function ChatPage() {
           <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-to-br from-violet-500 to-indigo-600">
             <Sparkles className="h-4 w-4 text-white" />
           </div>
-          <span className="text-sm font-semibold">Genbyte AI</span>
+          <span className="text-sm font-semibold">Vividity</span>
         </div>
 
         <div className="px-3 pb-3">
@@ -1739,37 +1274,6 @@ export default function ChatPage() {
             <Plus className="h-4 w-4" />
             New Chat
           </button>
-        </div>
-
-        <div className="px-3 pb-3">
-          <div className="mb-2 flex items-center justify-between px-1 text-[10px] font-semibold uppercase tracking-wider text-white/30">
-            <span>Recent Chats</span>
-            {isLoadingConversation && <Loader2 className="h-3 w-3 animate-spin" />}
-          </div>
-          <div className="max-h-52 space-y-1 overflow-y-auto pr-1">
-            {conversations.length === 0 ? (
-              <p className="rounded-lg px-2 py-2 text-[11px] text-white/35">No saved chats yet.</p>
-            ) : (
-              conversations.map((conversation) => (
-                <button
-                  key={conversation.id}
-                  type="button"
-                  onClick={() => openConversation(conversation.id)}
-                  className={cn(
-                    'w-full rounded-lg px-2.5 py-2 text-left transition-colors',
-                    activeConversationId === conversation.id
-                      ? 'bg-violet-500/20 text-white'
-                      : 'text-white/55 hover:bg-white/5 hover:text-white/80',
-                  )}
-                >
-                  <p className="truncate text-xs font-medium">{conversation.title}</p>
-                  <p className="mt-0.5 truncate text-[9px] text-white/30">
-                    {conversation.message_count} messages
-                  </p>
-                </button>
-              ))
-            )}
-          </div>
         </div>
 
         <div className="px-3 pb-3">
@@ -1807,27 +1311,12 @@ export default function ChatPage() {
             >
               <span className="flex items-center gap-2">
                 <PhoneCall className="h-4 w-4" />
-                Voice Agent
+                Cadence
               </span>
-              <span className="text-[10px] text-white/40">Soon</span>
+              <span className="text-[10px] text-white/40">Demo</span>
             </button>
 
-            <button
-              type="button"
-              onClick={() => setActiveModule('rpa')}
-              className={cn(
-                'flex w-full items-center justify-between rounded-xl border px-3 py-2.5 text-left text-sm transition-colors',
-                activeModule === 'rpa'
-                  ? 'border-violet-400/60 bg-violet-500/20 text-white'
-                  : 'border-white/10 bg-white/5 text-white/80 hover:bg-white/10',
-              )}
-            >
-              <span className="flex items-center gap-2">
-                <Workflow className="h-4 w-4" />
-                Clutch
-              </span>
-              <span className="text-[10px] text-white/40">GHL</span>
-            </button>
+
           </div>
         </div>
 
@@ -1856,7 +1345,7 @@ export default function ChatPage() {
                     <div>
                       <div className="mb-2 flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-violet-500">
                         <PhoneCall className="h-4 w-4" />
-                        Voice Agent Demo
+                        Cadence Demo
                       </div>
                       <h2 className="text-xl font-semibold text-foreground">
                         BlueStacks Cleaning Service
@@ -1875,7 +1364,7 @@ export default function ChatPage() {
                   <div className="rounded-2xl border border-border bg-background p-5">
                     <h3 className="text-base font-semibold text-foreground">Call Recording</h3>
                     <p className="mt-1 text-sm text-muted-foreground">
-                      Play the recording below to review the Voice Agent demo conversation.
+                      Play the recording below to review the Cadence demo conversation.
                     </p>
 
                     <div className="mt-5 rounded-2xl border border-border bg-card p-4">
@@ -1893,33 +1382,13 @@ export default function ChatPage() {
                     </div>
 
                     <p className="mt-3 text-xs text-muted-foreground">
-                      Recording: BlueStacks Cleaning Service · English · Voice Agent demo
+                      Recording: BlueStacks Cleaning Service · English · Cadence demo
                     </p>
                   </div>
 
                 </div>
               </div>
             </div>
-          </div>
-        )}
-
-        {activeModule === 'rpa' && !isRpaAdmin && (
-          <div className="absolute inset-0 z-20 flex items-center justify-center bg-background">
-            <div className="max-w-sm rounded-2xl border border-border bg-card p-6 text-center shadow-sm">
-              <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-red-500/10 text-red-500">
-                <ShieldCheck className="h-5 w-5" />
-              </div>
-              <h2 className="text-base font-semibold text-foreground">Clutch is admin-only</h2>
-              <p className="mt-2 text-sm text-muted-foreground">
-                GoHighLevel RPA is available only for the full admin account.
-              </p>
-            </div>
-          </div>
-        )}
-
-        {activeModule === 'rpa' && isRpaAdmin && (
-          <div className="absolute inset-0 z-20 bg-background">
-            <RpaAgentPanel user={user} />
           </div>
         )}
 
@@ -1930,11 +1399,6 @@ export default function ChatPage() {
                 <div className="flex items-center gap-2">
                   <h1 className="text-sm font-semibold text-foreground">
                     Vividity
-                    {activeConversationId && (
-                      <span className="ml-2 font-normal text-muted-foreground">
-                        · {activeConversationTitle}
-                      </span>
-                    )}
                   </h1>
                   <span className="rounded-full border border-violet-500/25 bg-violet-500/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-violet-600">
                     AI Demo Mode
@@ -1964,19 +1428,20 @@ export default function ChatPage() {
               Ask about customers, sales, inventory, invoices, or tenant performance using scoped DMS data.
             </p>
 
-            <div className="grid grid-cols-2 gap-3 w-full max-w-xl">
-              {SUGGESTED_PROMPTS.map((prompt) => (
-                <button
-                  key={prompt.label}
-                  onClick={() => sendMessage(prompt.label)}
-                  className="group flex items-start gap-3 rounded-xl border border-border bg-card p-4 text-left hover:bg-accent hover:border-primary/20 transition-all"
-                >
-                  <prompt.icon className={cn('h-5 w-5 mt-0.5 shrink-0', prompt.color)} />
-                  <span className="text-sm text-foreground/80 group-hover:text-foreground transition-colors leading-snug">
-                    {prompt.label}
-                  </span>
-                </button>
-              ))}
+            <div className="w-full max-w-xl rounded-2xl border border-violet-500/15 bg-card/75 p-6 text-center shadow-sm backdrop-blur-sm">
+              <div className="mx-auto mb-4 flex h-10 w-10 items-center justify-center rounded-xl bg-violet-500/10 text-violet-500">
+                <Bot className="h-5 w-5" />
+              </div>
+              <p className="text-base font-semibold text-foreground">
+                Hi, I&apos;m Vividity — your intelligent DMS AI agent.
+              </p>
+              <p className="mx-auto mt-2 max-w-md text-sm leading-relaxed text-muted-foreground">
+                I understand your dealership data, follow the context of this conversation,
+                and turn live business information into clear answers, tables, and charts.
+              </p>
+              <p className="mt-4 text-xs font-medium text-violet-600">
+                Ask me anything about sales, customers, inventory, service, invoices, or performance.
+              </p>
             </div>
 
             <div className="mt-8 flex items-center gap-6 text-xs text-muted-foreground">
@@ -2012,9 +1477,7 @@ export default function ChatPage() {
         <div className="relative z-10 border-t border-border bg-background/80 px-4 py-4 backdrop-blur-sm">
           <div className="mx-auto max-w-2xl">
             <div className="relative flex items-end gap-2 rounded-2xl border border-border bg-card shadow-sm focus-within:border-primary/50 focus-within:shadow-md transition-all">
-              <button className="absolute left-3 bottom-3 text-muted-foreground hover:text-foreground transition-colors">
-                <Paperclip className="h-4 w-4" />
-              </button>
+
 
               <textarea
                 ref={textareaRef}
@@ -2023,16 +1486,14 @@ export default function ChatPage() {
                 onChange={(e) => { setInput(e.target.value); autoResize(); }}
                 onKeyDown={handleKeyDown}
                 placeholder="Ask about customers, sales, inventory, invoices, or tenant performance..."
-                className="flex-1 resize-none bg-transparent pl-10 pr-24 py-3.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none max-h-40 min-h-[52px]"
+                className="flex-1 resize-none bg-transparent pl-4 pr-14 py-3.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none max-h-40 min-h-[52px]"
               />
 
               <div className="absolute right-3 bottom-2.5 flex items-center gap-1.5">
-                <button className="flex h-7 w-7 items-center justify-center rounded-lg text-muted-foreground hover:text-foreground hover:bg-accent transition-colors">
-                  <Mic className="h-4 w-4" />
-                </button>
+
                 <button
                   onClick={() => sendMessage(input)}
-                  disabled={!input.trim() || isTyping || isLoadingConversation}
+                  disabled={!input.trim() || isTyping}
                   className={cn(
                     'flex h-8 w-8 items-center justify-center rounded-xl transition-all',
                     input.trim() && !isTyping
@@ -2046,7 +1507,7 @@ export default function ChatPage() {
             </div>
 
             <p className="mt-2 text-center text-[11px] text-muted-foreground">
-              Demo assistant. Verify important business data before acting.
+              Vividity · DMS intelligence assistant. Verify important business data before acting.
             </p>
           </div>
         </div>
@@ -2099,7 +1560,7 @@ function ChatMessage({ message, userInitials }: { message: Message; userInitials
       </div>
       <div className="flex flex-col gap-1 min-w-0 flex-1">
         <div className="flex items-center gap-2 mb-0.5">
-          <span className="text-xs font-semibold text-foreground">Genbyte AI</span>
+          <span className="text-xs font-semibold text-foreground">Vividity</span>
           <span className="text-[10px] text-muted-foreground">{formatTime(message.timestamp)}</span>
           {message.agentData?.intent && !message.error && (
             <span className="rounded-full bg-muted px-1.5 py-0.5 text-[9px] font-medium text-muted-foreground uppercase tracking-wide">

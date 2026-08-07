@@ -2185,10 +2185,7 @@ def query(query: str | None = None):
             company_id=None,
             company_name=None,
             widgets_to_show=[],
-            text_response=(
-                "Error encountered due to backend LLM not working. "
-                "The chat agent requires OpenAI to detect intent, choose widgets, and plan scoped data access."
-            ),
+            text_response="Backend LLM is currently unavailable. Please try again later.",
             widget_payloads={},
             other={
                 "data_source": "none",
@@ -2250,10 +2247,7 @@ def query(query: str | None = None):
             company_id=None,
             company_name=None,
             widgets_to_show=[],
-            text_response=(
-                "Error encountered due to backend LLM not working. "
-                "The LLM returned an unsupported routing state."
-            ),
+            text_response="Backend LLM is currently unavailable. Please try again later.",
             widget_payloads={},
             other={
                 "data_source": "none",
@@ -4581,15 +4575,11 @@ def _data_agent_llm_error(route: dict[str, Any], user_query: str) -> dict[str, A
         company_id=None,
         company_name=None,
         widgets_to_show=[],
-        text_response="Sorry, the backend LLM is not working right now. Please try again shortly.",
+        text_response="Backend LLM is currently unavailable. Please try again later.",
         widget_payloads={},
         other={
             "llm_required": True,
-            "llm_provider": route.get("_llm_provider"),
-            "llm_model": route.get("_llm_model"),
-            "llm_status": route.get("_llm_status"),
-            "llm_error": route.get("_llm_error"),
-            "routing_query": user_query,
+            "llm_status": "unavailable",
         },
     )
 

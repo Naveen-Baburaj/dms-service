@@ -63,6 +63,51 @@ def _csrf_token() -> str:
     return token
 
 
+DEMO_LOGIN_USERS = {
+    "admin@dms.local",
+    "honda.manager@dms.local",
+    "nexa.manager@dms.local",
+    "jaguar.manager@dms.local",
+}
+
+
+@frappe.whitelist(allow_guest=True)
+def demo_login(email: str):
+    user_id = str(email or "").strip().lower()
+    if user_id not in DEMO_LOGIN_USERS:
+        return error(
+            _("Unknown demo account."),
+            http_status_code=401,
+        )
+
+    enabled = frappe.db.get_value("User", user_id, "enabled")
+    if not enabled:
+        return error(
+            _("Demo account is disabled or missing."),
+            http_status_code=401,
+        )
+
+    try:
+        frappe.local.login_manager = frappe.auth.LoginManager()
+        frappe.local.login_manager.login_as(user_id)
+        user = _user_payload(user_id)
+        csrf_token = _csrf_token()
+    except (frappe.AuthenticationError, frappe.PermissionError):
+        return error(
+            _("Unable to create demo session."),
+            http_status_code=401,
+        )
+
+    return success(
+        data={
+            "user": user,
+            "csrf_token": csrf_token,
+            "auth_mode": "frappe_session",
+        },
+        message="Demo login successful",
+    )
+
+
 def _user_payload(user_id: str) -> dict[str, Any]:
     user_doc = frappe.get_doc("User", user_id)
     if not int(user_doc.enabled or 0):

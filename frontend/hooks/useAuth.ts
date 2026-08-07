@@ -25,7 +25,12 @@ export function useAuth() {
     onMutate: () => setLoading(true),
     onSuccess: ({ user: authenticatedUser }) => {
       setAuth(authenticatedUser);
-      router.push(getDashboardRoute(authenticatedUser.company));
+      const destination = getDashboardRoute(authenticatedUser.company);
+      if (typeof window !== 'undefined') {
+        window.location.assign(destination);
+        return;
+      }
+      router.replace(destination);
     },
     onError: () => setLoading(false),
   });
