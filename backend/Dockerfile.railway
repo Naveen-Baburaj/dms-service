@@ -14,7 +14,7 @@ RUN bench init \
     --no-backups \
     frappe-bench
 
-COPY --chown=frappe:frappe . /home/frappe/frappe-bench/apps/dms
+COPY --chown=frappe:frappe backend/ /home/frappe/frappe-bench/apps/dms
 
 RUN cd /home/frappe/frappe-bench \
     && ./env/bin/pip install --no-cache-dir -e apps/dms \
