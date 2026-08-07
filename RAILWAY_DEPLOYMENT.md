@@ -1,6 +1,6 @@
 # Railway Deployment — DMS
 
-This repository is deployed as an isolated monorepo with two application services plus MariaDB and Redis.
+This repository deploys as two application services from the same GitHub root, plus MariaDB and Redis.
 
 ## Pinned application stack
 
@@ -10,39 +10,33 @@ This repository is deployed as an isolated monorepo with two application service
 - Node.js: `20.20.2`
 - MariaDB: `11.8`
 
-## Services
+## Application services
+
+Both `dms-frontend` and `dms-backend` connect to `Naveen-Baburaj/dms-service`, branch `main`, with repository root `/` as the build context. The services are distinguished only by their Dockerfile path.
 
 ### dms-frontend
 
-- Repository: `Naveen-Baburaj/dms-service`
-- Branch: `main`
-- Root directory: `/frontend`
-- Railway config: `/frontend/railway.toml`
-- Dockerfile: `/frontend/Dockerfile.railway`
-- Public service
-
-Required variables:
+Set:
 
 ```text
-DMS_INTERNAL_API_URL=http://dms-backend.railway.internal:<PORT>
+RAILWAY_DOCKERFILE_PATH=frontend/Dockerfile.railway
+PORT=3000
 DMS_FRAPPE_SITE=dms.localhost
+DMS_INTERNAL_API_URL=http://dms-backend.railway.internal:8000
 NODE_ENV=production
 ```
 
 Do not set `NEXT_PUBLIC_API_URL` in production. Browser requests intentionally use the same-origin `/api` proxy.
 
+Expose only this service with a Railway HTTP domain.
+
 ### dms-backend
 
-- Repository: `Naveen-Baburaj/dms-service`
-- Branch: `main`
-- Root directory: `/backend`
-- Railway config: `/backend/railway.toml`
-- Dockerfile: `/backend/Dockerfile.railway`
-- Private service
-
-Required variables:
+Set:
 
 ```text
+RAILWAY_DOCKERFILE_PATH=backend/Dockerfile.railway
+PORT=8000
 DMS_FRAPPE_SITE=dms.localhost
 DB_HOST=<MariaDB private host>
 DB_PORT=3306
@@ -55,37 +49,46 @@ LLM_PROVIDER=openai
 OPENAI_MODEL=gpt-5.4-mini
 OPENAI_API_KEY=<Railway secret; never commit>
 DMS_IGNORE_CSRF=1
+RUN_MIGRATE=0
 ```
 
-The backend runtime creates only Railway-specific site/common configuration files at container startup. Application source, Vividity behavior, Cadence, permissions, and business logic remain in the DMS app.
+Keep this service private. The frontend proxy and Next.js middleware call it over Railway private networking and inject `X-Frappe-Site-Name: dms.localhost`.
+
+The backend runtime creates Railway-specific site/common configuration files at container startup. Application source, Vividity behavior, Cadence, permissions, and business logic remain in the DMS app.
 
 ## MariaDB
 
-Use MariaDB `11.8` with a persistent volume mounted at `/var/lib/mysql`.
+Deploy `mariadb:11.8` with a persistent volume mounted at:
 
-The current local Frappe backup must be imported into the Railway database before the backend is considered ready. Do not commit backup files to this repository.
+```text
+/var/lib/mysql
+```
 
-After import, run the backend once with:
+Use a dedicated database/user for the Frappe site. Import the existing local Frappe SQL backup before the backend is considered ready.
+
+After import, temporarily set on `dms-backend`:
 
 ```text
 RUN_MIGRATE=1
 ```
 
-After a successful migration, set it back to `0` (or remove it) and redeploy.
+Redeploy once, confirm migration succeeds, then return it to `0` and redeploy.
 
 ## Redis
 
-A single Redis service is sufficient for the current demo. It can supply cache, queue, and socketio Redis URLs. Dedicated workers/scheduler can be added later if scheduled/background workloads become part of the public demo.
+A single Redis service is sufficient for the current demo. It supplies cache, queue, and socketio Redis URLs. Dedicated queue workers/scheduler services can be added later if asynchronous workloads become part of the public demo.
 
 ## Public routing
 
-The browser communicates only with the frontend domain.
-
 ```text
-Browser -> dms-frontend -> /api proxy -> dms-backend (Railway private network)
+Browser
+  -> dms-frontend public Railway domain
+      -> /api same-origin proxy
+          -> dms-backend.railway.internal:8000
+              -> MariaDB + Redis on Railway private network
 ```
 
-The proxy injects `X-Frappe-Site-Name: dms.localhost` and forwards Frappe session cookies. This preserves the current `sid`-based login/session model without cross-domain cookie handling.
+The proxy forwards Frappe session cookies, preserving the current `sid`-based login/session model without cross-domain cookie handling.
 
 ## Expected migrated data checks
 
