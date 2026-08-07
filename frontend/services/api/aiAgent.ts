@@ -1,6 +1,8 @@
 import { csrfStorage } from './client';
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://dms.localhost:8000';
+// Production uses the same-origin Next.js /api proxy. Local development keeps
+// its explicit NEXT_PUBLIC_API_URL=http://dms.localhost:8000 from .env.local.
+const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? '';
 
 export interface FiltersApplied {
   metric?: string | null;
