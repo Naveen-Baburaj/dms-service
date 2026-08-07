@@ -32,6 +32,9 @@ Thumbs.db
 playwright-report/
 test-results/
 
+# Railway local project linkage
+.railway/
+
 # RPA runtime files
 backend/.rpa_sessions/
 backend/sites/*/private/rpa_sessions/
