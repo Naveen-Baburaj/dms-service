@@ -1,0 +1,33 @@
+FROM frappe/bench:v5.31.0
+
+ARG FRAPPE_VERSION=v15.113.1
+
+USER frappe
+WORKDIR /home/frappe
+
+RUN bench init \
+    --frappe-path https://github.com/frappe/frappe \
+    --frappe-branch "${FRAPPE_VERSION}" \
+    --python python3.11 \
+    --skip-redis-config-generation \
+    --no-procfile \
+    --no-backups \
+    frappe-bench
+
+COPY --chown=frappe:frappe backend/ /home/frappe/frappe-bench/apps/dms
+
+RUN cd /home/frappe/frappe-bench \
+    && ./env/bin/pip install --no-cache-dir -e apps/dms \
+    && (grep -qxF dms sites/apps.txt || echo dms >> sites/apps.txt) \
+    && mkdir -p \
+        logs \
+        sites/dms.localhost/private/files \
+        sites/dms.localhost/public/files \
+    && chmod +x apps/dms/railway-entrypoint.sh
+
+WORKDIR /home/frappe/frappe-bench
+ENV PATH="/home/frappe/frappe-bench/env/bin:/home/frappe/.local/bin:${PATH}" \
+    PYTHONUNBUFFERED=1
+
+EXPOSE 8000
+ENTRYPOINT ["/home/frappe/frappe-bench/apps/dms/railway-entrypoint.sh"]

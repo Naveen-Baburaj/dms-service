@@ -42,3 +42,11 @@ ghl_storage_state.json
 backend/.env
 # TypeScript incremental build cache
 *.tsbuildinfo
+
+# Railway database migration artifacts must never enter Git history
+*-database.sql
+*-database.sql.gz
+*-site_config_backup.json
+*-private-files.tgz
+*-files.tgz
+.railway/

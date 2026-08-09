@@ -1,6 +1,9 @@
 import axios, { AxiosInstance, AxiosResponse } from 'axios';
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://dms.localhost:8000';
+// Railway production intentionally leaves NEXT_PUBLIC_API_URL unset so browser
+// requests use the public frontend's same-origin /api proxy. Local development
+// keeps its explicit http://dms.localhost:8000 value in .env.local.
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? '';
 const CSRF_TOKEN_KEY = 'dms_csrf_token';
 
 export const csrfStorage = {
