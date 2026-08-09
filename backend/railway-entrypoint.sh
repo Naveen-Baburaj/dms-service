@@ -86,6 +86,8 @@ for variable in ("REDIS_CACHE", "REDIS_QUEUE", "REDIS_SOCKETIO"):
 common = {
     "db_host": env("DB_HOST"),
     "db_port": int(env("DB_PORT", "3306")),
+    "default_site": site_name,
+    "serve_default_site": True,
     "redis_cache": env("REDIS_CACHE"),
     "redis_queue": env("REDIS_QUEUE"),
     "redis_socketio": env("REDIS_SOCKETIO", env("REDIS_QUEUE")),
@@ -222,6 +224,7 @@ fi
 
 echo "Starting Frappe $SITE_NAME on 0.0.0.0:$PORT"
 exec gunicorn \
+  --chdir "$BENCH_DIR/sites" \
   --bind "0.0.0.0:$PORT" \
   --workers "${WEB_CONCURRENCY:-2}" \
   --threads "${GUNICORN_THREADS:-4}" \
