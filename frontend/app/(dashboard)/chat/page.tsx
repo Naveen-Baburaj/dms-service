@@ -1,7 +1,7 @@
 'use client';
 import { useState, useRef, useEffect } from 'react';
 import {
-  Send, Plus, Bot, Sparkles, RotateCcw, ThumbsUp, ThumbsDown, Copy, Clock, Star, AlertCircle, PhoneCall, ShieldCheck,
+  Send, Plus, Bot, Sparkles, RotateCcw, ThumbsUp, ThumbsDown, Copy, Clock, Star, AlertCircle, PhoneCall, ShieldCheck, History, Loader2, MessageSquareText,
 } from 'lucide-react';
 import {
   AreaChart, Area, BarChart, Bar, PieChart, Pie, Cell, Legend,
@@ -14,7 +14,10 @@ import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import {
   queryDashboardAgent,
+  listAgentConversations,
+  getAgentConversation,
   type AgentResponse,
+  type AgentConversationSummary,
   type FiltersApplied,
   type AnalyticalViewPayload,
   type AnalyticalMeasure,
@@ -38,6 +41,28 @@ type WorkspaceModule = 'chat' | 'voice';
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function formatTime(date: Date): string {
   return date.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true });
+}
+
+function formatHistoryTime(value?: string): string {
+  if (!value) return '';
+
+  const parsed = new Date(value.includes('T') ? value : value.replace(' ', 'T'));
+  if (Number.isNaN(parsed.getTime())) return '';
+
+  const now = new Date();
+  const sameDay = parsed.toDateString() === now.toDateString();
+  if (sameDay) return formatTime(parsed);
+
+  const yesterday = new Date(now);
+  yesterday.setDate(now.getDate() - 1);
+  if (parsed.toDateString() === yesterday.toDateString()) return 'Yesterday';
+
+  const ageMs = now.getTime() - parsed.getTime();
+  if (ageMs >= 0 && ageMs < 7 * 24 * 60 * 60 * 1000) {
+    return parsed.toLocaleDateString('en-IN', { weekday: 'short' });
+  }
+
+  return parsed.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
 }
 
 
@@ -1167,13 +1192,54 @@ export default function ChatPage() {
   const [input, setInput] = useState('');
   const [isTyping, setIsTyping] = useState(false);
   const [activeModule, setActiveModule] = useState<WorkspaceModule>('chat');
+  const [conversations, setConversations] = useState<AgentConversationSummary[]>([]);
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
+  const [activeConversationTitle, setActiveConversationTitle] = useState('New chat');
+  const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+  const [loadingConversationId, setLoadingConversationId] = useState<string | null>(null);
+  const [historyError, setHistoryError] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const userIdentity = user?.id ?? user?.email;
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, isTyping]);
+
+  useEffect(() => {
+    setConversations([]);
+    setActiveConversationId(null);
+    setActiveConversationTitle('New chat');
+    setMessages([]);
+    setHistoryError(null);
+    setIsLoadingHistory(false);
+
+    if (!userIdentity) return;
+
+    let cancelled = false;
+    setIsLoadingHistory(true);
+
+    listAgentConversations({
+      role: resolveRole(user),
+      company: resolveCompany(user),
+      clientUserId: userIdentity,
+    })
+      .then((items) => {
+        if (!cancelled) setConversations(items);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setHistoryError('Chat history could not be loaded.');
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoadingHistory(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [userIdentity, user?.role, user?.company]);
 
 
 
@@ -1187,12 +1253,59 @@ export default function ChatPage() {
   function startNewChat() {
     setActiveModule('chat');
     setActiveConversationId(null);
+    setActiveConversationTitle('New chat');
     setMessages([]);
     setInput('');
+    setHistoryError(null);
+  }
+
+  async function refreshConversationList() {
+    if (!userIdentity) return;
+
+    const items = await listAgentConversations({
+      role: resolveRole(user),
+      company: resolveCompany(user),
+      clientUserId: userIdentity,
+    });
+    setConversations(items);
+  }
+
+  async function openConversation(conversationId: string) {
+    if (!userIdentity || isTyping || loadingConversationId) return;
+
+    setActiveModule('chat');
+    setLoadingConversationId(conversationId);
+    setHistoryError(null);
+
+    try {
+      const detail = await getAgentConversation({
+        conversationId,
+        role: resolveRole(user),
+        company: resolveCompany(user),
+        clientUserId: userIdentity,
+      });
+
+      setActiveConversationId(detail.conversation.id);
+      setActiveConversationTitle(detail.conversation.title || 'Conversation');
+      setMessages(
+        detail.messages.map((message) => ({
+          id: message.id,
+          role: message.role,
+          content: message.content,
+          timestamp: new Date(message.timestamp),
+          agentData: message.agent_data ?? undefined,
+          error: Boolean(message.error),
+        })),
+      );
+    } catch {
+      setHistoryError('That conversation could not be opened. Please try again.');
+    } finally {
+      setLoadingConversationId(null);
+    }
   }
 
   async function sendMessage(text: string) {
-    if (!text.trim() || isTyping) return;
+    if (!text.trim() || isTyping || loadingConversationId) return;
 
     const userMsg: Message = {
       id: Date.now().toString(),
@@ -1216,6 +1329,7 @@ export default function ChatPage() {
       });
 
       if (data.conversation_id) setActiveConversationId(data.conversation_id);
+      if (data.conversation_title) setActiveConversationTitle(data.conversation_title);
       setMessages((prev) => [
         ...prev,
         {
@@ -1226,6 +1340,10 @@ export default function ChatPage() {
           agentData: data,
         },
       ]);
+
+      void refreshConversationList().catch(() => {
+        setHistoryError('Chat history could not be refreshed.');
+      });
 
     } catch {
       setMessages((prev) => [
@@ -1269,14 +1387,76 @@ export default function ChatPage() {
         <div className="px-3 pb-3">
           <button
             onClick={startNewChat}
-            className="flex w-full items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-2.5 text-sm text-white/80 hover:bg-white/10 transition-colors"
+            disabled={Boolean(loadingConversationId) || isTyping}
+            className="flex w-full items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-2.5 text-sm text-white/80 hover:bg-white/10 transition-colors disabled:cursor-not-allowed disabled:opacity-50"
           >
             <Plus className="h-4 w-4" />
             New Chat
           </button>
         </div>
 
-        <div className="px-3 pb-3">
+        <div className="flex min-h-0 flex-1 flex-col px-3 pb-3">
+          <div className="mb-2 flex items-center justify-between px-1 text-[10px] font-semibold uppercase tracking-wider text-white/30">
+            <span className="flex items-center gap-1.5">
+              <History className="h-3 w-3" />
+              Chat history
+            </span>
+            {isLoadingHistory && <Loader2 className="h-3 w-3 animate-spin" />}
+          </div>
+
+          <div className="min-h-0 flex-1 space-y-1 overflow-y-auto pr-1">
+            {historyError && (
+              <p className="rounded-lg border border-red-400/10 bg-red-400/5 px-2.5 py-2 text-[10px] leading-relaxed text-red-200/70">
+                {historyError}
+              </p>
+            )}
+
+            {!isLoadingHistory && conversations.length === 0 && !historyError && (
+              <p className="rounded-lg px-2.5 py-2 text-[11px] text-white/35">
+                Your saved chats will appear here.
+              </p>
+            )}
+
+            {conversations.map((conversation) => {
+              const isActive = activeConversationId === conversation.id;
+              const isOpening = loadingConversationId === conversation.id;
+              const historyTime = formatHistoryTime(
+                conversation.last_message_at || conversation.updated_at,
+              );
+
+              return (
+                <button
+                  key={conversation.id}
+                  type="button"
+                  onClick={() => openConversation(conversation.id)}
+                  disabled={Boolean(loadingConversationId) || isTyping}
+                  aria-current={isActive ? 'page' : undefined}
+                  title={conversation.title}
+                  className={cn(
+                    'group w-full rounded-xl px-2.5 py-2 text-left transition-colors disabled:cursor-wait',
+                    isActive
+                      ? 'bg-violet-500/20 text-white'
+                      : 'text-white/55 hover:bg-white/5 hover:text-white/85',
+                  )}
+                >
+                  <div className="flex items-start gap-2">
+                    <MessageSquareText className="mt-0.5 h-3.5 w-3.5 shrink-0 opacity-60" />
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-xs font-medium">{conversation.title}</p>
+                      <p className="mt-0.5 flex items-center gap-1.5 truncate text-[9px] text-white/30">
+                        <span>{conversation.message_count} messages</span>
+                        {historyTime && <span>· {historyTime}</span>}
+                      </p>
+                    </div>
+                    {isOpening && <Loader2 className="mt-0.5 h-3 w-3 shrink-0 animate-spin" />}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="border-t border-white/[0.06] px-3 py-3">
           <div className="mb-2 px-1 text-[10px] font-semibold uppercase tracking-wider text-white/30">
             Agents
           </div>
@@ -1405,7 +1585,9 @@ export default function ChatPage() {
                   </span>
                 </div>
                 <p className="mt-0.5 text-xs text-muted-foreground">
-                  Scoped DMS data assistant for customers, sales, inventory, invoices, and tenant performance.
+                  {activeConversationId
+                    ? activeConversationTitle
+                    : 'Start a new conversation with your scoped DMS data.'}
                 </p>
               </div>
               <div className="inline-flex w-fit items-center gap-2 rounded-full border border-border bg-card/80 px-3 py-1.5 text-[11px] text-muted-foreground">
@@ -1417,7 +1599,14 @@ export default function ChatPage() {
           </div>
         )}
 
-        {messages.length === 0 && !isTyping ? (
+        {loadingConversationId ? (
+          <div className="relative z-10 flex flex-1 items-center justify-center">
+            <div className="flex items-center gap-2 rounded-full border border-border bg-card/80 px-4 py-2 text-xs text-muted-foreground shadow-sm backdrop-blur-sm">
+              <Loader2 className="h-4 w-4 animate-spin text-violet-500" />
+              Loading conversation...
+            </div>
+          </div>
+        ) : messages.length === 0 && !isTyping ? (
           /* Welcome / Empty state */
           <div className="relative z-10 flex flex-1 flex-col items-center justify-center overflow-y-auto p-8">
             <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-violet-500 to-indigo-600 shadow-lg shadow-violet-500/25 mb-5">
@@ -1485,18 +1674,21 @@ export default function ChatPage() {
                 value={input}
                 onChange={(e) => { setInput(e.target.value); autoResize(); }}
                 onKeyDown={handleKeyDown}
-                placeholder="Ask about customers, sales, inventory, invoices, or tenant performance..."
-                className="flex-1 resize-none bg-transparent pl-4 pr-14 py-3.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none max-h-40 min-h-[52px]"
+                disabled={Boolean(loadingConversationId)}
+                placeholder={loadingConversationId
+                  ? 'Loading conversation...'
+                  : 'Ask about customers, sales, inventory, invoices, or tenant performance...'}
+                className="flex-1 resize-none bg-transparent pl-4 pr-14 py-3.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none max-h-40 min-h-[52px] disabled:cursor-wait disabled:opacity-60"
               />
 
               <div className="absolute right-3 bottom-2.5 flex items-center gap-1.5">
 
                 <button
                   onClick={() => sendMessage(input)}
-                  disabled={!input.trim() || isTyping}
+                  disabled={!input.trim() || isTyping || Boolean(loadingConversationId)}
                   className={cn(
                     'flex h-8 w-8 items-center justify-center rounded-xl transition-all',
-                    input.trim() && !isTyping
+                    input.trim() && !isTyping && !loadingConversationId
                       ? 'bg-gradient-to-br from-violet-500 to-indigo-600 text-white shadow-md shadow-violet-500/30 hover:shadow-lg hover:scale-105'
                       : 'bg-muted text-muted-foreground cursor-not-allowed',
                   )}
