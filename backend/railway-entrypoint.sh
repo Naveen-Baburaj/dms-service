@@ -106,32 +106,37 @@ if env("BOOTSTRAP_EMPTY_SITE", "0") == "1":
     )
 
     print(f"Bootstrapping empty Frappe site {site_name}")
-    subprocess.run(
-        [
-            "bench",
-            "new-site",
-            site_name,
-            "--db-type",
-            "mariadb",
-            "--db-host",
-            env("DB_HOST"),
-            "--db-port",
-            env("DB_PORT", "3306"),
-            "--db-name",
-            env("DB_NAME"),
-            "--db-password",
-            env("DB_PASSWORD"),
-            "--admin-password",
-            admin_password,
-            "--no-setup-db",
-            "--install-app",
-            "dms",
-            "--set-default",
-            "--force",
-        ],
-        cwd=bench,
-        check=True,
-    )
+    try:
+        subprocess.run(
+            [
+                "bench",
+                "new-site",
+                site_name,
+                "--db-type",
+                "mariadb",
+                "--db-host",
+                env("DB_HOST"),
+                "--db-port",
+                env("DB_PORT", "3306"),
+                "--db-name",
+                env("DB_NAME"),
+                "--db-password",
+                env("DB_PASSWORD"),
+                "--admin-password",
+                admin_password,
+                "--no-setup-db",
+                "--install-app",
+                "dms",
+                "--set-default",
+                "--force",
+            ],
+            cwd=bench,
+            check=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        raise RuntimeError(
+            f"bench new-site failed with exit code {exc.returncode}"
+        ) from None
     subprocess.run(
         [
             "bench",

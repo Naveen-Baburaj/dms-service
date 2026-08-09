@@ -18,7 +18,7 @@ COPY --chown=frappe:frappe backend/ /home/frappe/frappe-bench/apps/dms
 
 RUN cd /home/frappe/frappe-bench \
     && ./env/bin/pip install --no-cache-dir -e apps/dms \
-    && (grep -qxF dms sites/apps.txt || echo dms >> sites/apps.txt) \
+    && printf 'frappe\ndms\n' > sites/apps.txt \
     && mkdir -p \
         logs \
         sites/dms.localhost/private/files \
