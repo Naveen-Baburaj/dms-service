@@ -27,11 +27,12 @@ export function useJaguarDashboard() {
   });
 }
 
-export function useGroupDashboard() {
+export function useGroupDashboard(enabled = true) {
   return useQuery({
     queryKey: ['dashboard', 'group'],
     queryFn: dashboardApi.group,
     staleTime: 2 * 60 * 1000,
+    enabled,
   });
 }
 

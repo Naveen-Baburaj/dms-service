@@ -1,21 +1,21 @@
 'use client';
-import { Building2, TrendingUp, Users, Car } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
+import { TrendingUp, Users, Car } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { useGroupDashboard } from '@/hooks/useDashboard';
+import { getVehicleInventory } from '@/services/api/inventory';
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
 
-const COMPANIES = [
+const COMPANY_META = [
   {
     id: 'HONDA-00001',
     name: 'Honda',
     brand: 'Honda',
     type: 'Dealership',
     color: 'bg-red-500',
-    users: 12,
-    vehicles: 48,
-    leads: 134,
     isActive: true,
   },
   {
@@ -24,9 +24,6 @@ const COMPANIES = [
     brand: 'NEXA (Maruti)',
     type: 'Dealership',
     color: 'bg-blue-600',
-    users: 9,
-    vehicles: 35,
-    leads: 98,
     isActive: true,
   },
   {
@@ -35,14 +32,30 @@ const COMPANIES = [
     brand: 'Jaguar Land Rover',
     type: 'Luxury Dealership',
     color: 'bg-gray-800',
-    users: 6,
-    vehicles: 22,
-    leads: 41,
     isActive: true,
   },
 ];
 
 export default function CompaniesPage() {
+  const { data: groupData } = useGroupDashboard();
+  const { data: inventory } = useQuery({
+    queryKey: ['inventory', 'admin-companies'],
+    queryFn: getVehicleInventory,
+    staleTime: 2 * 60 * 1000,
+  });
+
+  const companies = COMPANY_META.map((company) => {
+    const summary = groupData?.company_summary.find(
+      (item) => item.company === company.name,
+    );
+    return {
+      ...company,
+      users: 1,
+      vehicles: inventory?.company_counts?.[company.name] ?? 0,
+      leads: summary?.leads ?? 0,
+    };
+  });
+
   return (
     <div className="space-y-6">
       <div>
@@ -51,7 +64,7 @@ export default function CompaniesPage() {
       </div>
 
       <div className="grid grid-cols-3 gap-4">
-        {COMPANIES.map((c) => (
+        {companies.map((c) => (
           <Card key={c.id} className="relative overflow-hidden">
             <div className={`absolute top-0 left-0 right-0 h-1 ${c.color}`} />
             <CardHeader className="pb-3">
@@ -109,7 +122,7 @@ export default function CompaniesPage() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {COMPANIES.map((c) => (
+            {companies.map((c) => (
               <TableRow key={c.id}>
                 <TableCell className="font-mono text-xs">{c.id}</TableCell>
                 <TableCell className="font-medium">{c.name}</TableCell>

@@ -15,7 +15,7 @@ export default function ReportsPage() {
   const showGroupReports = user && isGroupAdmin(user.role);
 
   const { data: hondaData } = useHondaDashboard();
-  const { data: groupData } = useGroupDashboard();
+  const { data: groupData } = useGroupDashboard(Boolean(showGroupReports));
 
   return (
     <div className="space-y-6">

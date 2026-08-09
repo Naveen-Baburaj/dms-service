@@ -25,6 +25,13 @@ COLORS = {
     "Jaguar": "#555555",
 }
 
+DEMO_USERS = (
+    "admin@dms.local",
+    "honda.manager@dms.local",
+    "nexa.manager@dms.local",
+    "jaguar.manager@dms.local",
+)
+
 RESOURCES = {
     "leads": (
         "DMS Lead",
@@ -195,7 +202,7 @@ def _lead_sources(company_id: str | None) -> list[dict[str, Any]]:
     ]
 
 
-def _matrix(field: str) -> list[dict[str, Any]]:
+def _matrix(doctype: str, field: str) -> list[dict[str, Any]]:
     labels = _months(6)
     matrix = {
         label: {"month": label, "honda": 0.0, "nexa": 0.0, "jaguar": 0.0}
@@ -208,7 +215,7 @@ def _matrix(field: str) -> list[dict[str, Any]]:
     }
 
     rows = frappe.get_all(
-        "DMS Vehicle Sale",
+        doctype,
         fields=["company_id", "creation", field] if field != "count" else ["company_id", "creation"],
         order_by="creation asc",
     )
@@ -220,6 +227,18 @@ def _matrix(field: str) -> list[dict[str, Any]]:
             matrix[key][company] += 1 if field == "count" else _money(row.get(field))
 
     return list(matrix.values())
+
+
+def _active_demo_users() -> int:
+    return sum(
+        1
+        for user_id in DEMO_USERS
+        if frappe.db.get_value(
+            "User",
+            {"name": user_id, "enabled": 1},
+            "name",
+        )
+    )
 
 
 def _recent(doctype: str, company_id: str | None, limit: int = 5) -> list[dict[str, Any]]:
@@ -370,11 +389,11 @@ def _group_dashboard() -> dict[str, Any]:
             "total_leads": _kpi("Total Leads", _count("DMS Lead", {})),
             "total_sales": _kpi("Total Sales", _count("DMS Vehicle Sale", {})),
             "total_customers": _kpi("Total Customers", _count("DMS Customer", {})),
-            "active_users": _kpi("Active Users", frappe.db.count("User", {"enabled": 1})),
+            "active_users": _kpi("Active Users", _active_demo_users()),
         },
         "charts": {
-            "revenue_by_company": _matrix("final_price"),
-            "sales_by_company": _matrix("count"),
+            "revenue_by_company": _matrix("DMS Vehicle Sale", "final_price"),
+            "sales_by_company": _matrix("DMS Vehicle Sale", "count"),
             "revenue_share": [
                 {
                     "name": company["company_name"],
@@ -384,8 +403,8 @@ def _group_dashboard() -> dict[str, Any]:
                 for company in companies
             ],
             "monthly_revenue_trend": _series("DMS Vehicle Sale", "final_price"),
-            "lead_comparison": _matrix("count"),
-            "service_revenue_comparison": _matrix("final_price"),
+            "lead_comparison": _matrix("DMS Lead", "count"),
+            "service_revenue_comparison": _matrix("DMS Service Job", "total_amount"),
         },
         "company_summary": company_summary,
         "verification": {

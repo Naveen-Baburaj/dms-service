@@ -297,7 +297,9 @@ export default function InventoryPage() {
                     <td className="px-4 py-3">{row.model}</td>
                     <td className="px-4 py-3">{row.variant}</td>
                     <td className="px-4 py-3">{row.color}</td>
-                    <td className="px-4 py-3">{row.year ?? '—'}</td>
+                    <td className="px-4 py-3">
+                      {row.year && row.year > 0 ? row.year : '—'}
+                    </td>
                     <td className="px-4 py-3">
                       {row.fuel_type || '—'}
                     </td>

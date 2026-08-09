@@ -9,30 +9,24 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
 
-const MOCK_USERS = [
-  { id: 'u1', name: 'Rahul Sharma', email: 'honda.manager@dms.local', role: 'Honda Manager', company: 'Honda', companyColor: 'bg-red-500', lastLogin: '2 hours ago', isActive: true },
-  { id: 'u2', name: 'Sunita Rao', email: 'honda.user@dms.local', role: 'Honda User', company: 'Honda', companyColor: 'bg-red-500', lastLogin: '1 day ago', isActive: true },
-  { id: 'u3', name: 'Priya Mehta', email: 'nexa.manager@dms.local', role: 'NEXA Manager', company: 'NEXA', companyColor: 'bg-blue-600', lastLogin: '30 min ago', isActive: true },
-  { id: 'u4', name: 'Vikram Singh', email: 'nexa.user@dms.local', role: 'NEXA User', company: 'NEXA', companyColor: 'bg-blue-600', lastLogin: '3 days ago', isActive: true },
-  { id: 'u5', name: 'Arjun Kapoor', email: 'jaguar.manager@dms.local', role: 'Jaguar Manager', company: 'Jaguar', companyColor: 'bg-gray-800', lastLogin: 'Today', isActive: true },
-  { id: 'u6', name: 'Nisha Patel', email: 'jaguar.user@dms.local', role: 'Jaguar User', company: 'Jaguar', companyColor: 'bg-gray-800', lastLogin: '5 days ago', isActive: false },
-  { id: 'u7', name: 'Admin User', email: 'admin@dms.local', role: 'Group Admin', company: 'Group', companyColor: 'bg-indigo-600', lastLogin: 'Just now', isActive: true },
+const DEMO_USERS = [
+  { id: 'admin', name: 'DMS Group Administrator', email: 'admin@dms.local', role: 'Group Admin', company: 'Group', companyColor: 'bg-indigo-600', lastLogin: 'Current session', isActive: true },
+  { id: 'honda-manager', name: 'Honda Manager', email: 'honda.manager@dms.local', role: 'Honda Manager', company: 'Honda', companyColor: 'bg-red-500', lastLogin: 'Demo account', isActive: true },
+  { id: 'nexa-manager', name: 'NEXA Manager', email: 'nexa.manager@dms.local', role: 'NEXA Manager', company: 'NEXA', companyColor: 'bg-blue-600', lastLogin: 'Demo account', isActive: true },
+  { id: 'jaguar-manager', name: 'Jaguar Manager', email: 'jaguar.manager@dms.local', role: 'Jaguar Manager', company: 'Jaguar', companyColor: 'bg-gray-800', lastLogin: 'Demo account', isActive: true },
 ];
 
 const ROLE_COLORS: Record<string, string> = {
   'Honda Manager': 'bg-red-100 text-red-800 border-red-200',
-  'Honda User': 'bg-red-50 text-red-700 border-red-100',
   'NEXA Manager': 'bg-blue-100 text-blue-800 border-blue-200',
-  'NEXA User': 'bg-blue-50 text-blue-700 border-blue-100',
   'Jaguar Manager': 'bg-gray-100 text-gray-800 border-gray-300',
-  'Jaguar User': 'bg-gray-50 text-gray-700 border-gray-200',
   'Group Admin': 'bg-indigo-100 text-indigo-800 border-indigo-200',
 };
 
 export default function UserManagementPage() {
   const [search, setSearch] = useState('');
 
-  const filtered = MOCK_USERS.filter(
+  const filtered = DEMO_USERS.filter(
     (u) =>
       !search ||
       u.name.toLowerCase().includes(search.toLowerCase()) ||
@@ -45,7 +39,7 @@ export default function UserManagementPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">User Management</h1>
-          <p className="text-muted-foreground text-sm mt-0.5">{MOCK_USERS.length} users across all companies</p>
+          <p className="text-muted-foreground text-sm mt-0.5">{DEMO_USERS.length} demo users across all companies</p>
         </div>
         <Button>
           <UserPlus className="mr-2 h-4 w-4" />
