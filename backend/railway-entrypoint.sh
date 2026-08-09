@@ -28,6 +28,7 @@ for name in "${required[@]}"; do
 done
 
 mkdir -p \
+  "$SITE_DIR/logs" \
   "$SITE_DIR/private/files" \
   "$SITE_DIR/public/files" \
   "$BENCH_DIR/logs"
