@@ -11,7 +11,15 @@ if [[ ! "$SITE_NAME" =~ ^[A-Za-z0-9._-]+$ ]]; then
   exit 20
 fi
 
-required=(DB_HOST DB_PORT DB_NAME DB_PASSWORD REDIS_CACHE REDIS_QUEUE)
+required=(
+  DB_HOST
+  DB_PORT
+  DB_NAME
+  DB_PASSWORD
+  REDIS_CACHE
+  REDIS_QUEUE
+  FRAPPE_ENCRYPTION_KEY
+)
 for name in "${required[@]}"; do
   if [[ -z "${!name:-}" ]]; then
     echo "Missing required environment variable: $name" >&2
@@ -34,6 +42,7 @@ from urllib.parse import urlparse
 import json
 import os
 import socket
+import subprocess
 import time
 
 bench = Path(os.environ["BENCH_DIR"])
@@ -82,6 +91,58 @@ common = {
     "redis_socketio": env("REDIS_SOCKETIO", env("REDIS_QUEUE")),
     "socketio_port": 9000,
 }
+
+if env("BOOTSTRAP_EMPTY_SITE", "0") == "1":
+    admin_password = env("FRAPPE_ADMIN_PASSWORD")
+    if not admin_password:
+        raise RuntimeError(
+            "FRAPPE_ADMIN_PASSWORD is required when BOOTSTRAP_EMPTY_SITE=1"
+        )
+
+    # Site installation uses Frappe's cache while syncing DocTypes and fixtures.
+    # Make the private Redis services available before invoking bench new-site.
+    (bench / "sites" / "common_site_config.json").write_text(
+        json.dumps(common, indent=2, sort_keys=True) + "\n"
+    )
+
+    print(f"Bootstrapping empty Frappe site {site_name}")
+    subprocess.run(
+        [
+            "bench",
+            "new-site",
+            site_name,
+            "--db-type",
+            "mariadb",
+            "--db-host",
+            env("DB_HOST"),
+            "--db-port",
+            env("DB_PORT", "3306"),
+            "--db-name",
+            env("DB_NAME"),
+            "--db-password",
+            env("DB_PASSWORD"),
+            "--admin-password",
+            admin_password,
+            "--no-setup-db",
+            "--install-app",
+            "dms",
+            "--set-default",
+            "--force",
+        ],
+        cwd=bench,
+        check=True,
+    )
+    subprocess.run(
+        [
+            "bench",
+            "--site",
+            site_name,
+            "execute",
+            "dms.railway_bootstrap.run",
+        ],
+        cwd=bench,
+        check=True,
+    )
 
 site = {
     "db_name": env("DB_NAME"),

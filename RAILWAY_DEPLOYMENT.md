@@ -103,6 +103,20 @@ RUN_MIGRATE=1
 FRAPPE_ENCRYPTION_KEY=<local site encryption_key, when present>
 ```
 
+For a brand-new empty Railway database, the branch also supports a one-time,
+deterministic bootstrap using the same baseline and rich-data seed stages that
+produced the verified local census:
+
+```text
+BOOTSTRAP_EMPTY_SITE=1
+FRAPPE_ADMIN_PASSWORD=<Railway secret>
+FRAPPE_ENCRYPTION_KEY=<stable Railway secret>
+RUN_MIGRATE=0
+```
+
+As soon as the bootstrap census passes, set `BOOTSTRAP_EMPTY_SITE=0`. Never
+leave the one-time bootstrap flag enabled for routine redeployments.
+
 Use `RUN_MIGRATE=1` only for the first post-import deployment. After a successful
 migration, set it to `0` and redeploy. Optional runtime tuning:
 
