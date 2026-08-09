@@ -231,5 +231,5 @@ exec gunicorn \
   --worker-class gthread \
   --worker-tmp-dir /dev/shm \
   --timeout "${GUNICORN_TIMEOUT:-120}" \
-  frappe.app:application \
+  dms.railway_wsgi:application \
   --preload
