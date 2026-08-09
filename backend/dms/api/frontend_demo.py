@@ -7,6 +7,7 @@ import frappe
 from frappe.utils import add_months, getdate, nowdate
 
 from dms.utils.response import success, error
+from dms.utils.permissions import get_user_company, is_group_admin
 
 
 ALIASES = {
@@ -76,11 +77,8 @@ def _header(name: str) -> str | None:
 
 
 def _is_admin() -> bool:
-    if _header("x-user-role") == "service_centre_admin":
-        return True
-
     try:
-        return "Group Admin" in frappe.get_roles(frappe.session.user)
+        return bool(is_group_admin())
     except Exception:
         return False
 
@@ -104,8 +102,16 @@ def _scope(company: str | None = None) -> tuple[str | None, str | None]:
         cname = _company_name(company)
         return _company_id(cname), cname
 
-    cname = _company_name()
-    return _company_id(cname), cname
+    company_id = get_user_company()
+    if not company_id or company_id == "__none__":
+        return "__none__", None
+
+    company_name = frappe.db.get_value(
+        "DMS Company",
+        company_id,
+        "company_name",
+    )
+    return str(company_id), str(company_name or "")
 
 
 def _all_companies() -> list[dict[str, str]]:
@@ -520,7 +526,7 @@ def _list(resource: str, page: int = 1, page_size: int = 20, search: str | None 
 
 
 
-@frappe.whitelist(allow_guest=True)
+@frappe.whitelist()
 def dashboard(company: str = "Honda"):
     if company.lower() == "group":
         if not _is_admin():
@@ -530,7 +536,7 @@ def dashboard(company: str = "Honda"):
     return success(_dashboard(company))
 
 
-@frappe.whitelist(allow_guest=True)
+@frappe.whitelist()
 def records(resource: str, page: int = 1, page_size: int = 20, search: str | None = None, status: str | None = None):
     if resource not in RESOURCES:
         return error("Unknown resource.", 404)
