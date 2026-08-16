@@ -1591,7 +1591,7 @@ export default function ChatPage() {
                         Cadence Audio Demo
                       </div>
                       <h2 className="text-xl font-semibold text-foreground">
-                        BlueStacks Cleaning Service
+                        NEXA Customer Service
                       </h2>
                       <p className="mt-1 text-sm text-muted-foreground">
                         Demo voice interaction for a US-based cleaning service client.
@@ -1625,7 +1625,7 @@ export default function ChatPage() {
                     </div>
 
                     <p className="mt-3 text-xs text-muted-foreground">
-                      Recording: BlueStacks Cleaning Service · English · Cadence audio demo
+                      Recording: NEXA Customer Service · English · Cadence audio demo
                     </p>
                   </div>
 
