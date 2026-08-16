@@ -19,6 +19,8 @@ required=(
   REDIS_CACHE
   REDIS_QUEUE
   FRAPPE_ENCRYPTION_KEY
+  CADENCE_DASHBOARD_URL
+  CADENCE_SSO_SECRET
 )
 for name in "${required[@]}"; do
   if [[ -z "${!name:-}" ]]; then

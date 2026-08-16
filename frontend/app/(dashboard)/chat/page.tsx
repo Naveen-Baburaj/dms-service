@@ -22,6 +22,7 @@ import {
   type AnalyticalViewPayload,
   type AnalyticalMeasure,
 } from '@/services/api/aiAgent';
+import { createCadenceLaunch } from '@/services/api/cadence';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface Message {
@@ -1198,6 +1199,8 @@ export default function ChatPage() {
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
   const [loadingConversationId, setLoadingConversationId] = useState<string | null>(null);
   const [historyError, setHistoryError] = useState<string | null>(null);
+  const [isLaunchingCadence, setIsLaunchingCadence] = useState(false);
+  const [cadenceLaunchError, setCadenceLaunchError] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const userIdentity = user?.id ?? user?.email;
@@ -1301,6 +1304,42 @@ export default function ChatPage() {
       setHistoryError('That conversation could not be opened. Please try again.');
     } finally {
       setLoadingConversationId(null);
+    }
+  }
+
+  async function openCadenceDashboard() {
+    if (isLaunchingCadence) return;
+
+    setIsLaunchingCadence(true);
+    setCadenceLaunchError(null);
+
+    try {
+      const launch = await createCadenceLaunch();
+      const action = new URL(launch.launch_url);
+      if (action.protocol !== 'https:' && action.hostname !== 'localhost') {
+        throw new Error('Cadence returned an invalid launch address.');
+      }
+
+      const form = document.createElement('form');
+      form.method = 'POST';
+      form.action = action.toString();
+      form.style.display = 'none';
+
+      const token = document.createElement('input');
+      token.type = 'hidden';
+      token.name = 'token';
+      token.value = launch.token;
+      form.appendChild(token);
+
+      document.body.appendChild(form);
+      form.submit();
+    } catch (error) {
+      setCadenceLaunchError(
+        error instanceof Error
+          ? error.message
+          : 'Cadence could not be opened. Please try again.',
+      );
+      setIsLaunchingCadence(false);
     }
   }
 
@@ -1481,7 +1520,27 @@ export default function ChatPage() {
 
             <button
               type="button"
-              onClick={() => setActiveModule('voice')}
+              onClick={openCadenceDashboard}
+              disabled={isLaunchingCadence}
+              className="flex w-full items-center justify-between rounded-xl border border-white/10 bg-white/5 px-3 py-2.5 text-left text-sm text-white/80 transition-colors hover:bg-white/10 disabled:cursor-wait disabled:opacity-60"
+            >
+              <span className="flex items-center gap-2">
+                {isLaunchingCadence ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <PhoneCall className="h-4 w-4" />
+                )}
+                Cadence
+              </span>
+              <span className="text-[10px] text-white/40">Dashboard</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setCadenceLaunchError(null);
+                setActiveModule('voice');
+              }}
               className={cn(
                 'flex w-full items-center justify-between rounded-xl border px-3 py-2.5 text-left text-sm transition-colors',
                 activeModule === 'voice'
@@ -1491,12 +1550,16 @@ export default function ChatPage() {
             >
               <span className="flex items-center gap-2">
                 <PhoneCall className="h-4 w-4" />
-                Cadence
+                Cadence Audio Demo
               </span>
               <span className="text-[10px] text-white/40">Demo</span>
             </button>
 
-
+            {cadenceLaunchError && (
+              <p className="rounded-lg border border-red-400/10 bg-red-400/5 px-2.5 py-2 text-[10px] leading-relaxed text-red-200/70">
+                {cadenceLaunchError}
+              </p>
+            )}
           </div>
         </div>
 
@@ -1525,7 +1588,7 @@ export default function ChatPage() {
                     <div>
                       <div className="mb-2 flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-violet-500">
                         <PhoneCall className="h-4 w-4" />
-                        Cadence Demo
+                        Cadence Audio Demo
                       </div>
                       <h2 className="text-xl font-semibold text-foreground">
                         BlueStacks Cleaning Service
@@ -1562,7 +1625,7 @@ export default function ChatPage() {
                     </div>
 
                     <p className="mt-3 text-xs text-muted-foreground">
-                      Recording: BlueStacks Cleaning Service · English · Cadence demo
+                      Recording: BlueStacks Cleaning Service · English · Cadence audio demo
                     </p>
                   </div>
 
